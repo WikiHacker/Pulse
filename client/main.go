@@ -1298,12 +1298,13 @@ func getCPUModel() string {
 			}
 		}
 		
-		// Determine core type
-		if coreCount > totalPhysicalCores && totalPhysicalCores > 0 {
-			coreType = "Virtual" // Has hyperthreading
-		} else {
-			coreType = "Physical" // Will be corrected if VPS detected
+		// Use logical core count (includes hyperthreading)
+		// Core type will be determined by virtualization check below
+		logicalCount, _ := cpu.Counts(true)
+		if logicalCount > coreCount && logicalCount > 0 {
+			coreCount = logicalCount
 		}
+		coreType = "Physical" // Will be corrected if VPS detected
 		
 		// If WMIC failed, try gopsutil as fallback
 		if model == "" {
@@ -1311,15 +1312,11 @@ func getCPUModel() string {
 			cpuInfo, err := cpu.Info()
 			if err == nil && len(cpuInfo) > 0 {
 				model = strings.TrimSpace(cpuInfo[0].ModelName)
-				if cpuInfo[0].Cores > 0 {
+				logicalCount, _ := cpu.Counts(true)
+				if logicalCount > 0 {
+					coreCount = logicalCount
+				} else if cpuInfo[0].Cores > 0 {
 					coreCount = int(cpuInfo[0].Cores)
-					logicalCount, _ := cpu.Counts(true)
-					if logicalCount > coreCount {
-						coreCount = logicalCount
-						coreType = "Virtual"
-					} else {
-						coreType = "Physical"
-					}
 				}
 			}
 		}
@@ -1346,30 +1343,16 @@ func getCPUModel() string {
 			return ""
 		}
 		
-		// Get CPU cores count
-		if cpuInfo[0].Cores > 0 {
+		// Get CPU cores count - use logical count (includes hyperthreading)
+		logicalCount, err := cpu.Counts(true)
+		if err == nil && logicalCount > 0 {
+			coreCount = logicalCount
+		} else if cpuInfo[0].Cores > 0 {
 			coreCount = int(cpuInfo[0].Cores)
-			// Check if hyperthreading is enabled
-			logicalCount, err := cpu.Counts(true)
-			if err == nil && logicalCount > coreCount {
-				coreCount = logicalCount
-				coreType = "Virtual"
-			} else {
-				coreType = "Physical"
-			}
-		} else {
-			// Fallback to logical count
-			logicalCount, err := cpu.Counts(true)
-			if err == nil && logicalCount > 0 {
-				coreCount = logicalCount
-				coreType = "Virtual"
-			}
 		}
 		
-		// If we don't have core type yet, default to Physical (will be corrected below)
-		if coreType == "" {
-			coreType = "Physical"
-		}
+		// Default to Physical, will be corrected below if VPS
+		coreType = "Physical"
 	}
 	
 	// For ALL platforms: Detect virtualization and correct core type
@@ -1382,8 +1365,11 @@ func getCPUModel() string {
 	virtType := getVirtualizationType()
 	
 	// On VPS, all cores should be marked as Virtual
-	if virtType == "VPS" && coreType == "Physical" {
+	// On physical server (DS), always Physical Core
+	if virtType == "VPS" {
 		coreType = "Virtual"
+	} else {
+		coreType = "Physical"
 	}
 	
 	// Check if model already contains frequency
@@ -1518,39 +1504,30 @@ func getCPUModel() string {
 	}
 	
 	// Determine core type and count
-	// Priority: Check for virtualization, hyperthreading, or virtual != physical
+	// VPS = Virtual Core, Physical Server (DS) = Physical Core
 	if isVirtualized {
-		// Running in virtualized environment - always use virtual cores
+		// Running in virtualized environment - Virtual cores
 		coreCount = virtualCores
-		coreType = "Virtual"
-	} else if threadsPerCore > 1 {
-		// Has hyperthreading - use virtual cores
-		coreCount = virtualCores
-		coreType = "Virtual"
-	} else if virtualCores > 0 && physicalCores > 0 && virtualCores != physicalCores {
-		// Virtual cores != physical cores - use virtual cores
-		coreCount = virtualCores
-		coreType = "Virtual"
-	} else if virtualCores > 0 && physicalCores > 0 && virtualCores == physicalCores {
-		// Same count - use physical cores (real hardware, no hyperthreading)
-		coreCount = physicalCores
-		coreType = "Physical"
-	} else if physicalCores > 0 {
-		// Only physical cores available
-		coreCount = physicalCores
-		coreType = "Physical"
-	} else if virtualCores > 0 {
-		// Fallback to virtual cores if physical not available
-		coreCount = virtualCores
+		if coreCount == 0 {
+			coreCount = physicalCores
+		}
 		coreType = "Virtual"
 	} else {
-		// Last resort: count from /proc/cpuinfo
-		cmd = exec.Command("sh", "-c", "grep -c '^processor' /proc/cpuinfo")
-		output, err = cmd.Output()
-		if err == nil {
-			fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &coreCount)
-			coreType = "Virtual"
+		// Physical server - always Physical Core, even with hyperthreading
+		// Use total logical cores (includes hyperthreading)
+		if virtualCores > 0 {
+			coreCount = virtualCores
+		} else if physicalCores > 0 {
+			coreCount = physicalCores
+		} else {
+			// Last resort: count from /proc/cpuinfo
+			cmd = exec.Command("sh", "-c", "grep -c '^processor' /proc/cpuinfo")
+			output, err = cmd.Output()
+			if err == nil {
+				fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &coreCount)
+			}
 		}
+		coreType = "Physical"
 	}
 	
 	// Format output
