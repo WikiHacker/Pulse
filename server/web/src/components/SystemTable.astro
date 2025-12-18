@@ -1657,8 +1657,8 @@ const pollMs = Number(pollMsProp ?? 5000);
           backgroundColor: 'rgba(34, 197, 94, 0.1)',
           borderWidth: 2,
           fill: false, // Don't fill area to avoid interpolation
-          tension: 0, // No curve interpolation - straight lines only
-          spanGaps: false, // Don't span gaps - this will show time gaps correctly
+          tension: 0.1, // Slight curve for smoother appearance
+          spanGaps: true, // Skip null values (packet loss) but connect valid points
           pointRadius: 0, // No points, only lines
           pointHoverRadius: 0,
           pointHitRadius: 5, // Keep hover area for tooltips
