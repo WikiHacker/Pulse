@@ -1,0 +1,2297 @@
+---
+import SystemTableHeader from './SystemTableHeader.astro';
+import SystemTableHeaderRow from './SystemTableHeaderRow.astro';
+import LoadingState from './LoadingState.astro';
+import { Icon as AstroIcon } from 'astro-icon/components';
+
+const { apiBase: apiBaseProp, pollMs: pollMsProp } = Astro.props ?? {};
+const apiBase = apiBaseProp ?? '';
+const pollMs = Number(pollMsProp ?? 5000);
+---
+
+<div 
+  id="monitor-root"
+  data-api-base={apiBase}
+  data-poll-ms={pollMs}
+  class="mx-auto mt-2 sm:mt-3 max-w-7xl rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-2 sm:p-4 md:p-6"
+>
+  <SystemTableHeader />
+
+  <!-- 表格容器 - 独立边框 -->
+  <div class="rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#181818] dark:bg-[#181818] bg-[#fafafa] overflow-x-auto" style="scrollbar-width: none; -ms-overflow-style: none;">
+    <style>
+      #monitor-root .overflow-x-auto::-webkit-scrollbar {
+        display: none;
+      }
+    </style>
+    <div class="min-w-[1050px]">
+      <SystemTableHeaderRow />
+
+      <!-- 表格主体 -->
+      <div id="systems-body" class="divide-y divide-[#404040]/50 dark:divide-[#404040]/50 divide-[#e5e5e5]">
+        <LoadingState />
+    </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // Import utility functions (inline for Astro compatibility)
+  const getApiBase = (root) => {
+    if (root?.dataset.apiBase && root.dataset.apiBase.trim() !== '') {
+      return root.dataset.apiBase.trim();
+    }
+    // Use current origin (works with nginx reverse proxy)
+    return window.location.origin;
+  };
+
+  const fetchSystemMetrics = async (apiBase) => {
+    const res = await fetch(`${apiBase}/api/metrics`, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (Array.isArray(data)) return data;
+    if (data === null) return [];
+    return [];
+  };
+
+  const setupCopyButtons = (container) => {
+    if (!container || container.dataset.copySetup) return;
+    container.addEventListener('click', async (e) => {
+      const copyBtn = e.target.closest('.copy-btn');
+      if (!copyBtn) return;
+      e.stopPropagation();
+      const systemName = copyBtn.dataset.systemName;
+      if (systemName) {
+        const success = await copyToClipboard(systemName);
+        if (success) {
+          const copyIcon = copyBtn.querySelector('.copy-icon');
+          const checkIcon = copyBtn.querySelector('.check-icon');
+          const originalTitle = copyBtn.title;
+          if (copyIcon && checkIcon) {
+            copyIcon.style.display = 'none';
+            checkIcon.style.display = 'block';
+            copyBtn.title = 'Copied!';
+            setTimeout(() => {
+              copyIcon.style.display = 'block';
+              checkIcon.style.display = 'none';
+              copyBtn.title = originalTitle;
+            }, 1000);
+          }
+        }
+      }
+    });
+    container.dataset.copySetup = 'true';
+  };
+
+  const copyToClipboard = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (err) {
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        return true;
+      } catch (fallbackErr) {
+        return false;
+      }
+    }
+  };
+
+  // Country to flag icon mapping (emojione-v1)
+  const countryToFlag = (country) => {
+    if (!country) return null;
+    
+    const countryLower = country.toLowerCase().trim();
+    const flagMap = {
+      // Common countries
+      'germany': 'emojione-v1:flag-for-germany',
+      'united states': 'emojione-v1:flag-for-united-states',
+      'usa': 'emojione-v1:flag-for-united-states',
+      'us': 'emojione-v1:flag-for-united-states',
+      'united kingdom': 'emojione-v1:flag-for-united-kingdom',
+      'uk': 'emojione-v1:flag-for-united-kingdom',
+      'china': 'emojione-v1:flag-for-china',
+      'japan': 'emojione-v1:flag-for-japan',
+      'france': 'emojione-v1:flag-for-france',
+      'italy': 'emojione-v1:flag-for-italy',
+      'spain': 'emojione-v1:flag-for-spain',
+      'canada': 'emojione-v1:flag-for-canada',
+      'australia': 'emojione-v1:flag-for-australia',
+      'brazil': 'emojione-v1:flag-for-brazil',
+      'india': 'emojione-v1:flag-for-india',
+      'russia': 'emojione-v1:flag-for-russia',
+      'south korea': 'emojione-v1:flag-for-south-korea',
+      'korea': 'emojione-v1:flag-for-south-korea',
+      'netherlands': 'emojione-v1:flag-for-netherlands',
+      'sweden': 'emojione-v1:flag-for-sweden',
+      'norway': 'emojione-v1:flag-for-norway',
+      'denmark': 'emojione-v1:flag-for-denmark',
+      'finland': 'emojione-v1:flag-for-finland',
+      'poland': 'emojione-v1:flag-for-poland',
+      'singapore': 'emojione-v1:flag-for-singapore',
+      'hong kong': 'emojione-v1:flag-for-hong-kong',
+      'taiwan': 'emojione-v1:flag-for-taiwan',
+      'switzerland': 'emojione-v1:flag-for-switzerland',
+      'austria': 'emojione-v1:flag-for-austria',
+      'belgium': 'emojione-v1:flag-for-belgium',
+      'ireland': 'emojione-v1:flag-for-ireland',
+      'portugal': 'emojione-v1:flag-for-portugal',
+      'greece': 'emojione-v1:flag-for-greece',
+      'turkey': 'emojione-v1:flag-for-turkey',
+      'mexico': 'emojione-v1:flag-for-mexico',
+      'argentina': 'emojione-v1:flag-for-argentina',
+      'chile': 'emojione-v1:flag-for-chile',
+      'south africa': 'emojione-v1:flag-for-south-africa',
+      'egypt': 'emojione-v1:flag-for-egypt',
+      'israel': 'emojione-v1:flag-for-israel',
+      'uae': 'emojione-v1:flag-for-united-arab-emirates',
+      'united arab emirates': 'emojione-v1:flag-for-united-arab-emirates',
+      'saudi arabia': 'emojione-v1:flag-for-saudi-arabia',
+      'thailand': 'emojione-v1:flag-for-thailand',
+      'vietnam': 'emojione-v1:flag-for-vietnam',
+      'indonesia': 'emojione-v1:flag-for-indonesia',
+      'malaysia': 'emojione-v1:flag-for-malaysia',
+      'philippines': 'emojione-v1:flag-for-philippines',
+      'new zealand': 'emojione-v1:flag-for-new-zealand',
+      'czech republic': 'emojione-v1:flag-for-czech-republic',
+      'romania': 'emojione-v1:flag-for-romania',
+      'hungary': 'emojione-v1:flag-for-hungary',
+      'ukraine': 'emojione-v1:flag-for-ukraine',
+      'yemen': 'emojione-v1:flag-for-yemen',
+    };
+    
+    // Direct match
+    if (flagMap[countryLower]) {
+      return flagMap[countryLower];
+    }
+    
+    // Try to match by containing the country name
+    for (const [key, value] of Object.entries(flagMap)) {
+      if (countryLower.includes(key) || key.includes(countryLower)) {
+        return value;
+      }
+    }
+    
+    // Fallback: try to construct flag name from country
+    // Format: emojione-v1:flag-for-{country-name}
+    const flagName = countryLower.replace(/\s+/g, '-');
+    return `emojione-v1:flag-for-${flagName}`;
+  };
+
+  const loadOSIcons = async () => {
+    const iconElements = document.querySelectorAll('.os-icon');
+    for (const el of iconElements) {
+      const iconName = el.dataset.icon;
+      if (!iconName) continue;
+      try {
+        // OS icon: use a reasonable default size, CSS classes will control the actual display size
+        const response = await fetch(`https://api.iconify.design/${iconName}.svg?height=26`);
+        if (response.ok) {
+          const svg = await response.text();
+          el.innerHTML = svg;
+          const svgEl = el.querySelector('svg');
+          if (svgEl) {
+            svgEl.setAttribute('class', 'block leading-none w-5 h-5 sm:w-[26px] sm:h-[26px]');
+            svgEl.style.margin = '0';
+            svgEl.style.padding = '0';
+            svgEl.style.display = 'block';
+            svgEl.style.verticalAlign = 'middle'; // Center align for consistent row height
+            svgEl.style.lineHeight = '1'; // Remove line height spacing
+            svgEl.style.width = '100%';
+            svgEl.style.height = '100%';
+            svgEl.style.maxWidth = '100%';
+            svgEl.style.maxHeight = '100%';
+          }
+        }
+      } catch (e) {
+        // Icon load failed silently
+      }
+    }
+  };
+
+  const loadFlagIcons = async () => {
+    const flagElements = document.querySelectorAll('.flag-icon');
+    for (const el of flagElements) {
+      const iconName = el.dataset.icon;
+      if (!iconName) continue;
+      try {
+        // Flag icon: use a reasonable default size, CSS classes will control the actual display size
+        const response = await fetch(`https://api.iconify.design/${iconName}.svg?height=32`);
+        if (response.ok) {
+          const svg = await response.text();
+          el.innerHTML = svg;
+          const svgEl = el.querySelector('svg');
+          if (svgEl) {
+            svgEl.setAttribute('class', 'block leading-none w-6 h-6 sm:w-8 sm:h-8');
+            svgEl.style.margin = '0';
+            svgEl.style.padding = '0';
+            svgEl.style.display = 'block';
+            svgEl.style.verticalAlign = 'middle'; // Center align for consistent row height
+            svgEl.style.lineHeight = '1'; // Remove line height spacing
+            svgEl.style.width = '100%';
+            svgEl.style.height = '100%';
+            svgEl.style.maxWidth = '100%';
+            svgEl.style.maxHeight = '100%';
+          }
+        }
+      } catch (e) {
+        // Flag icon load failed silently
+      }
+    }
+  };
+
+  // Detect CPU brand from CPU model string
+
+  const root = document.getElementById('monitor-root');
+  const apiBase = getApiBase(root);
+  const pollMs = Number(root?.dataset.pollMs || '5000');
+
+  const body = document.getElementById('systems-body');
+  const loadingIndicator = document.getElementById('loading-indicator');
+  
+  // SSE connection for real-time updates
+  let eventSource = null;
+  
+  // Cache current data for comparison
+  let currentData = new Map(); // key: system ID, value: system data
+
+  // Sort state (temporary, not persisted)
+  let currentSort = {
+    field: null, // 'name', 'time', 'os', or null (no sort - default backend order)
+    direction: 'asc' // 'asc', 'desc'
+  };
+
+  // Filter state
+  let currentFilter = '';
+
+  // Filter systems function - filters systems based on search query
+  function filterSystems(systems) {
+    if (!currentFilter || currentFilter.trim() === '') {
+      return systems; // No filter
+    }
+
+    const filterLower = currentFilter.trim().toLowerCase();
+    return systems.filter(system => {
+      // Search in name
+      const name = (system.name || '').toLowerCase();
+      if (name.includes(filterLower)) return true;
+
+      // Search in location
+      const location = (system.location || '').toLowerCase();
+      if (location.includes(filterLower)) return true;
+
+      // Search in OS
+      const os = (system.os || '').toLowerCase();
+      if (os.includes(filterLower)) return true;
+
+      // Search in CPU model
+      const cpuModel = (system.cpu_model || '').toLowerCase();
+      if (cpuModel.includes(filterLower)) return true;
+
+      // Search in IP addresses
+      const ipv4 = (system.ipv4 || '').toLowerCase();
+      const ipv6 = (system.ipv6 || '').toLowerCase();
+      if (ipv4.includes(filterLower) || ipv6.includes(filterLower)) return true;
+
+      return false;
+    });
+  }
+
+  // Sort systems function - sorts ALL systems regardless of alert/status
+  function sortSystems(systems) {
+    if (!currentSort.field) {
+      return systems; // No sorting
+    }
+
+    const sorted = [...systems].sort((a, b) => {
+      let aVal, bVal;
+      let aIsEmpty = false;
+      let bIsEmpty = false;
+
+      switch (currentSort.field) {
+        case 'name':
+          aVal = (a.name || '').trim().toLowerCase();
+          bVal = (b.name || '').trim().toLowerCase();
+          aIsEmpty = !aVal;
+          bIsEmpty = !bVal;
+          break;
+        case 'time':
+          // Parse time string (format: "HH:MM:SS" or "X hours" or "X days")
+          aVal = (a.time || '').trim();
+          bVal = (b.time || '').trim();
+          aIsEmpty = !aVal;
+          bIsEmpty = !bVal;
+          
+          // If both are non-empty, try to parse for better sorting
+          if (!aIsEmpty && !bIsEmpty) {
+            // Try to extract numeric values for comparison
+            const aNum = extractTimeValue(aVal);
+            const bNum = extractTimeValue(bVal);
+            if (aNum !== null && bNum !== null) {
+              // Both have numeric values, compare numerically
+              if (aNum < bNum) return currentSort.direction === 'asc' ? -1 : 1;
+              if (aNum > bNum) return currentSort.direction === 'asc' ? 1 : -1;
+              return 0;
+            }
+          }
+          break;
+        case 'os':
+          aVal = (a.os || '').trim().toLowerCase();
+          bVal = (b.os || '').trim().toLowerCase();
+          aIsEmpty = !aVal;
+          bIsEmpty = !bVal;
+          break;
+        default:
+          return 0;
+      }
+
+      // Handle empty values: empty values go to the end (or beginning for desc)
+      if (aIsEmpty && bIsEmpty) return 0;
+      if (aIsEmpty) return currentSort.direction === 'asc' ? 1 : -1; // Empty goes to end for asc, beginning for desc
+      if (bIsEmpty) return currentSort.direction === 'asc' ? -1 : 1; // Empty goes to end for asc, beginning for desc
+
+      // String comparison for non-empty values
+      if (aVal < bVal) return currentSort.direction === 'asc' ? -1 : 1;
+      if (aVal > bVal) return currentSort.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return sorted;
+  }
+
+  // Helper function to extract numeric value from time string
+  function extractTimeValue(timeStr) {
+    if (!timeStr) return null;
+    
+    // Try to match patterns like "5 hours", "2 days", "12:34:56", etc.
+    const hoursMatch = timeStr.match(/(\d+)\s*hours?/i);
+    if (hoursMatch) {
+      return parseInt(hoursMatch[1], 10); // Return hours as number
+    }
+    
+    const daysMatch = timeStr.match(/(\d+)\s*days?/i);
+    if (daysMatch) {
+      return parseInt(daysMatch[1], 10) * 24; // Convert days to hours for comparison
+    }
+    
+    // Try to parse as HH:MM:SS
+    const timeMatch = timeStr.match(/(\d+):(\d+):(\d+)/);
+    if (timeMatch) {
+      const hours = parseInt(timeMatch[1], 10);
+      const minutes = parseInt(timeMatch[2], 10);
+      const seconds = parseInt(timeMatch[3], 10);
+      return hours + minutes / 60 + seconds / 3600; // Convert to hours
+    }
+    
+    return null; // Could not parse
+  }
+
+  // Update sort UI
+  function updateSortUI() {
+    // Update sort indicators
+    document.querySelectorAll('.sort-option').forEach(btn => {
+      const indicator = btn.querySelector('.sort-indicator');
+      if (btn.dataset.sort === currentSort.field) {
+        btn.classList.add('bg-[#282828]', 'dark:bg-[#282828]', 'bg-[#f5f5f5]');
+        if (indicator) {
+          indicator.classList.remove('hidden');
+          // Show direction arrow in indicator
+          const isAsc = currentSort.direction === 'asc';
+          indicator.innerHTML = isAsc 
+            ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>'
+            : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+        }
+      } else {
+        btn.classList.remove('bg-[#282828]', 'dark:bg-[#282828]', 'bg-[#f5f5f5]');
+        if (indicator) {
+          indicator.classList.add('hidden');
+          // Reset to check icon
+          indicator.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
+        }
+      }
+    });
+  }
+
+  // Columns dropdown controls
+  const columnsBtn = document.getElementById('columns-btn');
+  const columnsDropdown = document.getElementById('columns-dropdown');
+  const columnsContainer = document.getElementById('columns-dropdown-container');
+
+  // Toggle dropdown
+  columnsBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    columnsDropdown?.classList.toggle('hidden');
+  });
+
+  // Close dropdown when clicking outside
+  document.addEventListener('click', (e) => {
+    if (columnsContainer && !columnsContainer.contains(e.target)) {
+      columnsDropdown?.classList.add('hidden');
+    }
+  });
+
+  // Sort option buttons
+  document.querySelectorAll('.sort-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const sortField = btn.dataset.sort;
+      if (sortField) {
+        // If clicking the same field, toggle direction
+        if (currentSort.field === sortField) {
+          currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+          currentSort.field = sortField;
+          currentSort.direction = 'asc'; // Reset to ascending for new field
+        }
+        updateSortUI();
+        loadData(); // Reload with new sort
+      }
+    });
+  });
+
+  // Initialize sort UI (no sort by default - shows backend order)
+  updateSortUI();
+
+  const pct = (val) => Math.min(Math.max(val || 0, 0), 100);
+
+  // Calculate and adjust server name column width based on longest name
+  function adjustServerNameColumnWidth() {
+    if (!body) return;
+    
+    const rows = body.querySelectorAll('.system-row');
+    if (rows.length === 0) return;
+    
+    let maxWidth = 160; // Minimum width in pixels
+    
+    // Find the maximum width of server name cells by measuring actual cell width
+    rows.forEach(systemRow => {
+      const rowElement = systemRow.querySelector('[data-system-id]');
+      if (!rowElement) return;
+      
+      const nameCell = rowElement.querySelector('div:first-child');
+      if (nameCell) {
+        // Measure the actual width of the entire cell (including all internal elements)
+        // This gives us the most accurate measurement
+        const cellWidth = nameCell.offsetWidth;
+        if (cellWidth > 0) {
+          maxWidth = Math.max(maxWidth, cellWidth);
+        }
+      }
+    });
+    
+    // If we couldn't measure any cells (they might not be rendered yet), use a fallback
+    if (maxWidth === 160) {
+      // Try to measure text width as fallback
+      rows.forEach(systemRow => {
+        const rowElement = systemRow.querySelector('[data-system-id]');
+        if (!rowElement) return;
+        
+        const nameCell = rowElement.querySelector('div:first-child');
+        if (nameCell) {
+          const spans = nameCell.querySelectorAll('span');
+          for (let i = 0; i < spans.length; i++) {
+            const span = spans[i];
+            if (!span.classList.contains('rounded-full') && span.textContent && span.textContent.trim() !== '') {
+              const tempSpan = document.createElement('span');
+              const computedStyle = window.getComputedStyle(span);
+              tempSpan.style.cssText = `
+                position: absolute;
+                visibility: hidden;
+                white-space: nowrap;
+                font-family: ${computedStyle.fontFamily};
+                font-size: ${computedStyle.fontSize};
+                font-weight: ${computedStyle.fontWeight};
+                letter-spacing: ${computedStyle.letterSpacing};
+              `;
+              tempSpan.textContent = span.textContent.trim();
+              document.body.appendChild(tempSpan);
+              
+              const textWidth = tempSpan.offsetWidth;
+              // Add space for status dot, gaps, and copy button
+              const estimatedCellWidth = textWidth + 40;
+              maxWidth = Math.max(maxWidth, estimatedCellWidth);
+              
+              document.body.removeChild(tempSpan);
+              break;
+            }
+          }
+        }
+      });
+    }
+    
+    // Set the column width for all rows and header using inline style
+    const columnWidth = `${Math.ceil(maxWidth)}px`;
+    const gridTemplateColumns = `minmax(160px,${columnWidth}) minmax(70px,0.8fr) minmax(90px,1fr) minmax(150px,1.8fr) minmax(150px,1.8fr) minmax(150px,1.8fr) minmax(85px,0.9fr) minmax(90px,1fr)`;
+    
+    // Update all table rows
+    rows.forEach(systemRow => {
+      const rowElement = systemRow.querySelector('[data-system-id]');
+      if (rowElement) {
+        rowElement.style.gridTemplateColumns = gridTemplateColumns;
+      }
+    });
+    
+    // Update table header row to match - this ensures perfect alignment
+    const headerRow = document.getElementById('system-table-header-row');
+    if (headerRow) {
+      headerRow.style.gridTemplateColumns = gridTemplateColumns;
+    }
+  }
+  
+  // Debounced version for performance
+  let adjustColumnWidthTimeout = null;
+  function adjustServerNameColumnWidthDebounced() {
+    if (adjustColumnWidthTimeout) {
+      clearTimeout(adjustColumnWidthTimeout);
+    }
+    adjustColumnWidthTimeout = setTimeout(() => {
+      adjustServerNameColumnWidth();
+      adjustColumnWidthTimeout = null;
+    }, 100);
+  }
+
+  const progress = (value, warn = false, isOffline = false) => `
+    <div class="flex items-center gap-1 sm:gap-1.5 pr-2 sm:pr-3 min-w-0 w-full">
+      <span class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] w-8 sm:w-10 shrink-0">${value.toFixed(1)}%</span>
+      <div class="relative h-2.5 sm:h-3 flex-1 min-w-[60px] max-w-[100px] sm:max-w-[120px] overflow-hidden rounded-full bg-[#111] dark:bg-[#111] bg-[#e5e5e5]">
+        <div class="absolute inset-y-0 left-0 h-full rounded-full ${isOffline ? 'bg-red-500' : (warn ? 'bg-amber-500' : 'bg-emerald-500')}" style="width:${pct(value)}%"></div>
+    </div>
+    </div>
+  `;
+
+  const renderRow = (item, showTCPing = true) => {
+    // Determine if system is offline/paused (alert = true means offline/paused)
+    const isOffline = item.alert || false;
+    return `
+    <div class="system-row" data-system-id="${item.id}">
+      <div class="group grid grid-cols-[minmax(160px,max-content)_minmax(70px,0.8fr)_minmax(90px,1fr)_minmax(150px,1.8fr)_minmax(150px,1.8fr)_minmax(150px,1.8fr)_minmax(85px,0.9fr)_minmax(90px,1fr)] items-center gap-1 sm:gap-2 px-3 sm:px-4 md:px-6 py-2 sm:py-3 hover:bg-[#222]/50 dark:hover:bg-[#222]/50 hover:bg-[#f5f5f5] cursor-pointer transition-colors" data-system-id="${item.id}">
+        <div class="flex items-center gap-1.5 sm:gap-2.5 min-h-[20px]">
+          <span class="h-1.5 w-1.5 sm:h-2 sm:w-2 rounded-full ${isOffline ? 'bg-red-400' : 'bg-emerald-400'} shrink-0"></span>
+          <span class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]">${item.name || 'unknown'}</span>
+          <button class="copy-btn text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#d4d4d4] dark:hover:text-[#d4d4d4] hover:text-[#151515] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" data-system-name="${item.name || 'unknown'}" title="Copy system name">
+            <svg class="copy-icon w-2.5 h-2.5 sm:w-3 sm:h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+            <svg class="check-icon w-2.5 h-2.5 sm:w-3 sm:h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;"><path d="M20 6L9 17l-5-5"/></svg>
+          </button>
+    </div>
+        <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] h-5 flex items-center">${item.time || '-'}</div>
+        <div class="h-5 flex items-center" title="${item.location || '-'}">
+          ${item.location ? (() => {
+            const flagIcon = countryToFlag(item.location);
+            if (flagIcon) {
+              return `<span class="flag-icon block leading-none w-6 h-6 sm:w-8 sm:h-8" data-icon="${flagIcon}"></span>`;
+            }
+            return `<span class="text-[10px] sm:text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]">${item.location}</span>`;
+          })() : '<span class="text-[10px] sm:text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]">-</span>'}
+    </div>
+        <div class="h-5 flex items-center pr-2 sm:pr-3 min-w-0 w-full">${progress(item.cpu || 0, false, isOffline)}</div>
+        <div class="h-5 flex items-center pr-2 sm:pr-3 min-w-0 w-full">${progress(item.memory || 0, false, isOffline)}</div>
+        <div class="h-5 flex items-center pr-2 sm:pr-3 min-w-0 w-full">${progress((item.disk || 0), (item.disk || 0) > 65, isOffline)}</div>
+        <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] h-5 flex items-center">${((item.net_in_mb_s || 0) + (item.net_out_mb_s || 0)).toFixed(2)} MB/s</div>
+        <div class="h-5 flex items-center justify-center w-full" title="${item.os || '-'}">
+          ${item.os_icon ? `<span class="os-icon block leading-none w-5 h-5 sm:w-[26px] sm:h-[26px]" data-icon="${item.os_icon}"></span>` : `<span class="text-[10px] sm:text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]">${item.os || '-'}</span>`}
+    </div>
+    </div>
+      <!-- Expandable details section -->
+      <div class="system-details hidden border-t border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#1a1a1a] dark:bg-[#1a1a1a] bg-[#fafafa] overflow-hidden" data-details-id="${item.id}" style="width: 100%;">
+        <div class="details-content px-3 sm:px-4 md:px-6 py-2 sm:py-3">
+          <div class="flex flex-col gap-1.5 sm:gap-2 items-start">
+            <!-- CPU Info -->
+            <div class="flex flex-wrap items-baseline gap-1.5 sm:gap-2" style="min-height: 16px; line-height: 16px;">
+              <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0" data-translate-detail="cpuInformation">CPU Information:</div>
+              <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] leading-normal" data-detail="cpu_model">${item.cpu_model || '-'}</div>
+            </div>
+            <!-- Memory Info -->
+            <div class="flex flex-wrap items-baseline gap-1.5 sm:gap-2">
+              <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0" data-translate-detail="memoryInfo">Memory:</div>
+              <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] leading-normal" data-detail="memory_info">${item.memory_info || '-'}</div>
+            </div>
+            <!-- Swap Info -->
+            <div class="flex flex-wrap items-baseline gap-1.5 sm:gap-2">
+              <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0" data-translate-detail="swapPartition">Swap Partition:</div>
+              <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] leading-normal" data-detail="swap_info">${item.swap_info || '-'}</div>
+            </div>
+            <!-- Disk Info -->
+            <div class="flex flex-wrap items-baseline gap-1.5 sm:gap-2">
+              <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0" data-translate-detail="diskInformation">Disk Information:</div>
+              <div class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] leading-normal" data-detail="disk_info">${item.disk_info || '-'}</div>
+            </div>
+          </div>
+        </div>
+      ${showTCPing ? `<!-- TCPing Chart Section -->
+      <div class="border-t border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 px-3 sm:px-4 md:px-6 py-2 sm:py-3" data-tcping-chart-container="${item.id}" style="width: 100%;">
+        <div class="rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#151515] dark:bg-[#151515] bg-white p-2 sm:p-3">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 mb-2">
+            <div class="text-[10px] sm:text-xs font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]" data-translate-detail="tcpingLatency">TCPing Latency (24h)</div>
+            <!-- Statistics display -->
+            <div class="flex gap-3 sm:gap-4 text-[10px] sm:text-xs" data-tcping-stats="${item.id}">
+              <div class="flex items-center gap-1">
+                <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]" data-translate-detail="avgLatency">Avg:</span>
+                <span class="font-medium text-[#262626] dark:text-[#f5f5f5]" data-tcping-avg="${item.id}">-</span>
+          </div>
+              <div class="flex items-center gap-1">
+                <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]" data-translate-detail="packetLoss">Loss:</span>
+                <span class="font-medium text-[#262626] dark:text-[#f5f5f5]" data-tcping-loss="${item.id}">-</span>
+        </div>
+        </div>
+        </div>
+          <!-- Tabs for different targets -->
+          <div class="flex gap-1 mb-3 flex-wrap" data-tcping-tabs="${item.id}"></div>
+          <!-- Chart canvas -->
+          <div class="relative" style="height: 200px; width: 100%;">
+            <!-- Loading state -->
+            <div class="absolute inset-0 flex items-center justify-center bg-[#151515] dark:bg-[#151515] bg-white rounded" data-tcping-loading="${item.id}">
+              <div class="flex flex-col items-center gap-2">
+                <div class="w-6 h-6 border-2 border-[#404040] dark:border-[#404040] border-[#a3a3a3] border-t-transparent dark:border-t-transparent rounded-full animate-spin"></div>
+                <span class="text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]" data-translate-detail="loading">Loading...</span>
+        </div>
+      </div>
+            <!-- No data state -->
+            <div class="absolute inset-0 flex items-center justify-center bg-[#151515] dark:bg-[#151515] bg-white rounded hidden" data-tcping-no-data="${item.id}">
+              <div class="flex flex-col items-center gap-2">
+                <svg class="w-8 h-8 text-[#404040] dark:text-[#404040]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                </svg>
+                <span class="text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]" data-translate-detail="noData">No data</span>
+    </div>
+  </div>
+            <canvas data-tcping-chart="${item.id}" style="width: 100%; height: 100%;" class="opacity-0 transition-opacity duration-300" data-tcping-canvas="${item.id}"></canvas>
+</div>
+      </div>` : ''}
+    </div>
+  </div>
+</div>
+  `;
+  };
+
+  const translations = {
+    'noSystemsFound': { en: 'No services found', zh: '未找到服务' },
+    'systemsWillAppear': { en: 'Services will appear here once agents start reporting', zh: '代理开始报告后，服务将显示在这里' },
+    'cpuInformation': { en: 'CPU Information:', zh: 'CPU 信息:' },
+    'memoryInfo': { en: 'Memory:', zh: '内存:' },
+    'swapPartition': { en: 'Swap Partition:', zh: '交换分区:' },
+    'diskInformation': { en: 'Disk Information:', zh: '磁盘信息:' },
+    'tcpingLatency': { en: 'TCPing Latency (24h)', zh: 'TCPing 延迟 (24小时)' },
+    'avgLatency': { en: 'Avg:', zh: '平均:' },
+    'packetLoss': { en: 'Loss:', zh: '丢包:' },
+    'loading': { en: 'Loading...', zh: '加载中...' },
+    'noData': { en: 'No data', zh: '暂无数据' },
+  };
+
+  function getCurrentLanguage() {
+    const stored = localStorage.getItem('preferred-language');
+    if (stored === 'zh' || stored === 'en') {
+      return stored;
+    }
+    // Default to English, not system language
+    return 'en';
+  }
+
+  function updateTranslations() {
+    const lang = getCurrentLanguage();
+    
+    // Update empty state - fix null check
+    if (body) {
+      const emptyState = body.querySelector('.text-sm.font-medium');
+      if (emptyState && (emptyState.textContent === translations.noSystemsFound.en || emptyState.textContent === translations.noSystemsFound.zh)) {
+        const emptyContainer = body.querySelector('.flex.flex-col.items-center');
+        if (emptyContainer) {
+          const noSystems = emptyContainer.querySelector('.text-sm.font-medium');
+          const willAppear = emptyContainer.querySelector('.text-xs');
+          if (noSystems) noSystems.textContent = translations.noSystemsFound[lang];
+          if (willAppear) willAppear.textContent = translations.systemsWillAppear[lang];
+        }
+      }
+    }
+    
+    // Update expandable details - search in entire document to include hidden elements
+    document.querySelectorAll('[data-translate-detail]').forEach(el => {
+      const key = el.getAttribute('data-translate-detail');
+      if (key && translations[key]) {
+        const translatedText = translations[key][lang];
+        if (translatedText) {
+          el.textContent = translatedText;
+        }
+      }
+    });
+  }
+
+  // Listen for language changes
+  window.addEventListener('languagechange', updateTranslations);
+  window.addEventListener('translate', updateTranslations);
+  
+  // Update chart tooltip styles when theme changes
+  window.addEventListener('themechange', (e) => {
+    const theme = e.detail?.theme || (document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+    updateChartTooltipStyles(theme);
+  });
+  
+  // Function to update tooltip styles for all charts
+  function updateChartTooltipStyles(theme) {
+    const isDarkMode = theme === 'dark';
+    const tooltipBg = isDarkMode ? 'rgba(21, 21, 21, 0.95)' : 'rgba(250, 250, 250, 0.95)';
+    const tooltipTextColor = isDarkMode ? '#f5f5f5' : '#262626';
+    const tooltipBorderColor = isDarkMode ? '#404040' : '#a3a3a3';
+    
+    // Update all existing charts
+    tcpingCharts.forEach((chartData, key) => {
+      const chart = chartData.chart;
+      if (chart && chart.options && chart.options.plugins && chart.options.plugins.tooltip) {
+        // Safety check: ensure chart and canvas are still valid
+        if (!chart.canvas || !chart.canvas.parentElement) {
+          return;
+        }
+        
+        chart.options.plugins.tooltip.backgroundColor = tooltipBg;
+        chart.options.plugins.tooltip.titleColor = tooltipTextColor;
+        chart.options.plugins.tooltip.bodyColor = tooltipTextColor;
+        chart.options.plugins.tooltip.borderColor = tooltipBorderColor;
+        
+        try {
+          chart.update('none'); // Update without animation
+        } catch (err) {
+          // Chart update failed silently
+        }
+      }
+    });
+  }
+
+  const showEmpty = () => {
+    if (loadingIndicator) loadingIndicator.style.display = 'none';
+    if (body) {
+      const lang = getCurrentLanguage();
+      body.innerHTML = `
+        <div class="flex flex-col items-center justify-center py-12 text-center">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-[#404040] dark:text-[#404040] text-[#d4d4d4] mb-3">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+            <line x1="8" y1="21" x2="16" y2="21"/>
+            <line x1="12" y1="17" x2="12" y2="21"/>
+          </svg>
+          <p class="text-sm font-medium text-[#737373] dark:text-[#737373] text-[#404040]">${translations.noSystemsFound[lang]}</p>
+          <p class="text-xs text-[#404040] dark:text-[#525252] text-[#737373] mt-1">${translations.systemsWillAppear[lang]}</p>
+    </div>
+  `;
+    }
+  };
+
+  // Normalize data for comparison (ensure consistent types)
+  function normalizeItem(item) {
+    return {
+      id: String(item.id || ''),
+      name: String(item.name || ''),
+      time: String(item.time || ''),
+      location: String(item.location || ''),
+      cpu: Number(item.cpu || 0),
+      cpu_model: String(item.cpu_model || ''),
+      memory: Number(item.memory || 0),
+      memory_info: String(item.memory_info || ''),
+      swap_info: String(item.swap_info || ''),
+      disk: Number(item.disk || 0),
+      disk_info: String(item.disk_info || ''),
+      net_in_mb_s: Number(item.net_in_mb_s || 0),
+      net_out_mb_s: Number(item.net_out_mb_s || 0),
+      os: String(item.os || ''),
+      os_icon: String(item.os_icon || ''),
+      alert: Boolean(item.alert || false),
+      order: Number(item.order || 0)
+    };
+  }
+  
+  // Check if two system objects have changed (excluding updated_at)
+  function hasChanged(oldItem, newItem) {
+    if (!oldItem) return true; // New item
+    if (!newItem) return false; // Deleted item
+    
+    // Normalize both items for consistent comparison
+    const old = normalizeItem(oldItem);
+    const new_ = normalizeItem(newItem);
+    
+    // Helper to compare floats with small epsilon (0.1% change threshold)
+    const floatEqual = (a, b) => Math.abs(a - b) < 0.1;
+    
+    // Compare relevant fields - only return true if there's a meaningful change
+    return (
+      old.name !== new_.name ||
+      old.time !== new_.time ||
+      old.location !== new_.location ||
+      !floatEqual(old.cpu, new_.cpu) ||
+      old.cpu_model !== new_.cpu_model ||
+      !floatEqual(old.memory, new_.memory) ||
+      old.memory_info !== new_.memory_info ||
+      old.swap_info !== new_.swap_info ||
+      !floatEqual(old.disk, new_.disk) ||
+      old.disk_info !== new_.disk_info ||
+      !floatEqual(old.net_in_mb_s, new_.net_in_mb_s) ||
+      !floatEqual(old.net_out_mb_s, new_.net_out_mb_s) ||
+      old.os !== new_.os ||
+      old.os_icon !== new_.os_icon ||
+      old.alert !== new_.alert ||
+      old.order !== new_.order
+    );
+  }
+  
+  // Update a single row in the DOM - only update changed cells
+  function updateRow(rowElement, item, previousItem) {
+    if (!rowElement) return;
+    
+    // Get cached old item for comparison (normalized)
+    // Use previousItem if provided, otherwise fall back to currentData
+    const oldItemNormalized = previousItem ? normalizeItem(previousItem) : (currentData.get(item.id) || normalizeItem({}));
+    
+    // Normalize new item for comparison
+    const newItemNormalized = normalizeItem(item);
+    
+    // Get all cells (children of the grid row)
+    const cells = Array.from(rowElement.children);
+    if (cells.length < 8) return; // Safety check
+    
+    // If no old data, update all fields (treat as new item)
+    const shouldUpdateAll = !previousItem && !currentData.get(item.id);
+    
+    // Cell 0: System name (with status dot and copy button)
+    const systemCell = cells[0];
+    if (systemCell) {
+      if (shouldUpdateAll || oldItemNormalized.alert !== newItemNormalized.alert) {
+        // Use rounded-full to match the status dot (which has h-1.5 w-1.5 sm:h-2 sm:w-2)
+        const statusDot = systemCell.querySelector('span.rounded-full.shrink-0');
+        if (statusDot) {
+          // Offline/paused state: red, Online state: green
+          // Preserve responsive classes: h-1.5 w-1.5 sm:h-2 sm:w-2
+          statusDot.className = `h-1.5 w-1.5 sm:h-2 sm:w-2 rounded-full ${item.alert ? 'bg-red-400' : 'bg-emerald-400'} shrink-0`;
+        }
+      }
+      if (shouldUpdateAll || oldItemNormalized.name !== newItemNormalized.name) {
+        // Use font-medium to match the name span (which has text-[10px] sm:text-xs)
+        // Exclude the status dot by checking it doesn't have rounded-full class
+        const allSpans = systemCell.querySelectorAll('span.font-medium');
+        for (const span of allSpans) {
+          // The name span doesn't have rounded-full class, status dot does
+          if (!span.classList.contains('rounded-full')) {
+            span.textContent = item.name || 'unknown';
+            break; // Found the name span, no need to continue
+          }
+        }
+        const copyBtn = systemCell.querySelector('.copy-btn');
+        if (copyBtn) {
+          copyBtn.dataset.systemName = item.name || 'unknown';
+        }
+        // Recalculate column width when name changes
+        adjustServerNameColumnWidthDebounced();
+      }
+    }
+    
+    // Cell 1: Time - only update if changed
+    if (shouldUpdateAll || oldItemNormalized.time !== newItemNormalized.time) {
+      const timeCell = cells[1];
+      if (timeCell) {
+        timeCell.textContent = item.time || '-';
+      }
+    }
+    
+    // Cell 2: Location - only update if changed
+    if (shouldUpdateAll || oldItemNormalized.location !== newItemNormalized.location) {
+      const locationCell = cells[2];
+      if (locationCell) {
+        if (item.location) {
+          const flagIcon = countryToFlag(item.location);
+          if (flagIcon) {
+            locationCell.innerHTML = `<span class="flag-icon block leading-none w-6 h-6 sm:w-8 sm:h-8" data-icon="${flagIcon}"></span>`;
+            locationCell.title = item.location; // Set title for tooltip
+            setTimeout(() => loadFlagIcons(), 0);
+          } else {
+            locationCell.innerHTML = `<span class="text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]">${item.location}</span>`;
+            locationCell.title = item.location;
+          }
+        } else {
+          locationCell.innerHTML = '<span class="text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]">-</span>';
+          locationCell.title = '-';
+        }
+      }
+    }
+    
+    // Check if system is offline/paused
+    const isOffline = newItemNormalized.alert || false;
+    
+    // Cell 3: CPU - only update if changed (with threshold)
+    const cpuChanged = Math.abs(oldItemNormalized.cpu - newItemNormalized.cpu) >= 0.1;
+    const cpuStatusChanged = oldItemNormalized.alert !== newItemNormalized.alert;
+    if (shouldUpdateAll || cpuChanged || cpuStatusChanged) {
+      const cpuCell = cells[3];
+      if (cpuCell) {
+        // Update progress bar and text directly
+        // Use more flexible selector to match span with font-medium class (which has text-[10px] sm:text-xs)
+        const textSpan = cpuCell.querySelector('span.font-medium');
+        const progressBar = cpuCell.querySelector('div.absolute');
+        const value = newItemNormalized.cpu;
+        if (textSpan) {
+          textSpan.textContent = `${value.toFixed(1)}%`;
+        }
+        if (progressBar) {
+          progressBar.style.width = `${pct(value)}%`;
+          // Offline: red, Online: green
+          progressBar.className = `absolute inset-y-0 left-0 h-full rounded-full ${isOffline ? 'bg-red-500' : 'bg-emerald-500'}`;
+        }
+      }
+    }
+    
+    // Cell 4: Memory - only update if changed (with threshold)
+    const memoryChanged = Math.abs(oldItemNormalized.memory - newItemNormalized.memory) >= 0.1;
+    const memoryStatusChanged = oldItemNormalized.alert !== newItemNormalized.alert;
+    if (shouldUpdateAll || memoryChanged || memoryStatusChanged) {
+      const memoryCell = cells[4];
+      if (memoryCell) {
+        // Use more flexible selector to match span with font-medium class (which has text-[10px] sm:text-xs)
+        const textSpan = memoryCell.querySelector('span.font-medium');
+        const progressBar = memoryCell.querySelector('div.absolute');
+        const value = newItemNormalized.memory;
+        if (textSpan) {
+          textSpan.textContent = `${value.toFixed(1)}%`;
+        }
+        if (progressBar) {
+          progressBar.style.width = `${pct(value)}%`;
+          // Offline: red, Online: green
+          progressBar.className = `absolute inset-y-0 left-0 h-full rounded-full ${isOffline ? 'bg-red-500' : 'bg-emerald-500'}`;
+        }
+      }
+    }
+    
+    // Cell 5: Disk - only update if changed (with threshold)
+    const diskChanged = Math.abs(oldItemNormalized.disk - newItemNormalized.disk) >= 0.1;
+    const diskStatusChanged = oldItemNormalized.alert !== newItemNormalized.alert;
+    if (shouldUpdateAll || diskChanged || diskStatusChanged) {
+      const diskCell = cells[5];
+      if (diskCell) {
+        // Use more flexible selector to match span with font-medium class (which has text-[10px] sm:text-xs)
+        const textSpan = diskCell.querySelector('span.font-medium');
+        const progressBar = diskCell.querySelector('div.absolute');
+        const value = newItemNormalized.disk;
+        const warn = value > 65 && !isOffline; // Only warn if online
+        if (textSpan) {
+          textSpan.textContent = `${value.toFixed(1)}%`;
+        }
+        if (progressBar) {
+          progressBar.style.width = `${pct(value)}%`;
+          // Offline: red, Online: warn (amber) or normal (green)
+          progressBar.className = `absolute inset-y-0 left-0 h-full rounded-full ${isOffline ? 'bg-red-500' : (warn ? 'bg-amber-500' : 'bg-emerald-500')}`;
+        }
+      }
+    }
+    
+    // Cell 6: Net - only update if changed (with threshold)
+    const netInChanged = Math.abs(oldItemNormalized.net_in_mb_s - newItemNormalized.net_in_mb_s) >= 0.01;
+    const netOutChanged = Math.abs(oldItemNormalized.net_out_mb_s - newItemNormalized.net_out_mb_s) >= 0.01;
+    if (shouldUpdateAll || netInChanged || netOutChanged) {
+      const netCell = cells[6];
+      if (netCell) {
+        netCell.textContent = `${(newItemNormalized.net_in_mb_s + newItemNormalized.net_out_mb_s).toFixed(2)} MB/s`;
+      }
+    }
+    
+    // Cell 7: OS - only update if changed
+    if (oldItemNormalized.os !== newItemNormalized.os || oldItemNormalized.os_icon !== newItemNormalized.os_icon) {
+      const osCell = cells[7];
+      if (osCell) {
+        if (item.os_icon) {
+          osCell.innerHTML = `<span class="os-icon block leading-none w-5 h-5 sm:w-[26px] sm:h-[26px]" data-icon="${item.os_icon}"></span>`;
+          setTimeout(() => loadOSIcons(), 0);
+        } else {
+          osCell.innerHTML = `<span class="text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040]">${item.os || '-'}</span>`;
+        }
+      }
+    }
+    
+    // Update expandable details section if it exists and is visible
+    // Always update the data, even if hidden, so it's ready when expanded
+    const systemRow = rowElement.closest('.system-row');
+    if (systemRow) {
+      const detailsSection = systemRow.querySelector('.system-details');
+      if (detailsSection) {
+        // Update details content - check if values changed
+        const cpuModelEl = detailsSection.querySelector('[data-detail="cpu_model"]');
+        const memoryInfoEl = detailsSection.querySelector('[data-detail="memory_info"]');
+        const swapInfoEl = detailsSection.querySelector('[data-detail="swap_info"]');
+        const diskInfoEl = detailsSection.querySelector('[data-detail="disk_info"]');
+        
+        // Update CPU model if changed
+        if (cpuModelEl) {
+          const newCpuModel = String(item.cpu_model || '-');
+          const oldCpuModel = cpuModelEl.textContent;
+          if (oldCpuModel !== newCpuModel) {
+            // Update text
+            cpuModelEl.textContent = newCpuModel;
+            
+          }
+        }
+        
+        // Update memory info if changed
+        if (memoryInfoEl) {
+          const newMemoryInfo = String(item.memory_info || '-');
+          if (memoryInfoEl.textContent !== newMemoryInfo) {
+            memoryInfoEl.textContent = newMemoryInfo;
+          }
+        }
+        
+        // Update swap info if changed
+        if (swapInfoEl) {
+          const newSwapInfo = String(item.swap_info || '-');
+          if (swapInfoEl.textContent !== newSwapInfo) {
+            swapInfoEl.textContent = newSwapInfo;
+          }
+        }
+        
+        // Update disk info if changed
+        if (diskInfoEl) {
+          const newDiskInfo = String(item.disk_info || '-');
+          if (diskInfoEl.textContent !== newDiskInfo) {
+            diskInfoEl.textContent = newDiskInfo;
+          }
+        }
+      }
+    }
+  }
+  
+  // TCPing chart instances storage
+  const tcpingCharts = new Map(); // key: systemId_target, value: { chart: Chart, target: string }
+  const tcpingConfigs = new Map(); // key: systemId, value: TCPingConfig
+  // Map to store current active target for each system
+  const tcpingActiveTargets = new Map(); // systemId -> { target: address, targetName: name }
+  
+  // Global cache for TCPing config (preloaded on page load)
+  let cachedTCPingConfig = null;
+  let tcpingConfigLoading = null; // Promise to prevent duplicate fetches
+
+  // Load tcping config (with caching)
+  async function loadTCPingConfig(forceRefresh = false) {
+    // Return cached config if available and not forcing refresh
+    if (cachedTCPingConfig && !forceRefresh) {
+      return cachedTCPingConfig;
+    }
+    
+    // If already loading, wait for the existing promise
+    if (tcpingConfigLoading && !forceRefresh) {
+      return tcpingConfigLoading;
+    }
+    
+    // Start loading
+    tcpingConfigLoading = (async () => {
+      try {
+        const res = await fetch(`${apiBase}/api/tcping/config`);
+        if (res.ok) {
+          const config = await res.json();
+          cachedTCPingConfig = config;
+          return config;
+        }
+      } catch (err) {
+        // Config load failed silently
+      }
+      return null;
+    })();
+    
+    const result = await tcpingConfigLoading;
+    tcpingConfigLoading = null;
+    return result;
+  }
+  
+  // Preload TCPing config on page load
+  function preloadTCPingConfig() {
+    loadTCPingConfig().then(config => {
+      if (config && config.targets && config.targets.length > 0) {
+        // Also preload Chart.js if TCPing is configured
+        preloadChartJS();
+      }
+    });
+  }
+  
+  // Preload Chart.js library for faster chart rendering
+  function preloadChartJS() {
+    // Skip if already loaded or loading
+    if (window.Chart || document.querySelector('script[data-chartjs]')) {
+      return;
+    }
+    
+    // Load Chart.js
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
+    script.async = true;
+    script.setAttribute('data-chartjs', 'true');
+    script.onload = () => {
+      // Also preload date adapter
+      if (!document.querySelector('script[data-chartjs-adapter]')) {
+        const adapterScript = document.createElement('script');
+        adapterScript.src = 'https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';
+        adapterScript.async = true;
+        adapterScript.setAttribute('data-chartjs-adapter', 'true');
+        adapterScript.onload = () => {
+          window._chartjsAdapterLoaded = true;
+        };
+        document.head.appendChild(adapterScript);
+      }
+    };
+    document.head.appendChild(script);
+  }
+
+  // Load tcping history data
+  async function loadTCPingHistory(clientID, target) {
+    try {
+      const url = `${apiBase}/api/tcping/history?client_id=${encodeURIComponent(clientID)}${target ? `&target=${encodeURIComponent(target)}` : ''}`;
+      const res = await fetch(url);
+      if (res.ok) {
+      const data = await res.json();
+        // Ensure we always return an array
+        return Array.isArray(data) ? data : [];
+      }
+    } catch (err) {
+      // History load failed silently
+    }
+    // Always return an empty array if there's an error or no data
+    return [];
+  }
+
+  // Helper function to create tabs for TCPing targets
+  function createTCPingTabs(systemId, config, tabsContainer) {
+    // Clear existing tabs
+    tabsContainer.innerHTML = '';
+    
+    let activeTarget = null;
+    
+    // Create tabs for each target
+    config.targets.forEach((target, index) => {
+      const tab = document.createElement('button');
+      tab.className = `px-3 py-1 text-xs font-medium rounded transition-colors ${
+        index === 0 
+          ? 'bg-[#404040]/50 dark:bg-[#404040]/50 text-[#f5f5f5] dark:text-[#f5f5f5] text-[#151515]' 
+          : 'bg-transparent text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] hover:bg-[#404040]/30 dark:hover:bg-[#404040]/30'
+      }`;
+      tab.textContent = target.name || target.address;
+      tab.dataset.target = target.address;
+      tab.dataset.targetName = target.name || target.address;
+      
+      if (index === 0) {
+        activeTarget = target.address;
+      }
+
+      tab.addEventListener('click', () => {
+        // Update active tab
+        tabsContainer.querySelectorAll('button').forEach(btn => {
+          btn.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-transparent text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] hover:bg-[#404040]/30 dark:hover:bg-[#404040]/30';
+        });
+        tab.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-[#404040]/50 dark:bg-[#404040]/50 text-[#f5f5f5] dark:text-[#f5f5f5] text-[#151515]';
+        
+        // Update current active target for this system
+        tcpingActiveTargets.set(systemId, {
+          target: target.address,
+          targetName: target.name || target.address
+        });
+        
+        // Switch chart - always use incremental=false to ensure full reload and stats update
+        updateTCPingChart(systemId, target.address, target.name || target.address, false);
+      });
+
+      tabsContainer.appendChild(tab);
+    });
+    
+    return activeTarget;
+  }
+
+  // Initialize tcping chart for a system
+  async function initializeTCPingChart(systemId) {
+    const container = document.querySelector(`[data-tcping-chart-container="${systemId}"]`);
+    if (!container) {
+      return;
+    }
+
+    const canvas = container.querySelector(`[data-tcping-chart="${systemId}"]`);
+    const tabsContainer = container.querySelector(`[data-tcping-tabs="${systemId}"]`);
+    if (!canvas || !tabsContainer) {
+      return;
+    }
+
+    // Show loading state for chart only (not tabs)
+    const loadingElement = container.querySelector(`[data-tcping-loading="${systemId}"]`);
+    if (loadingElement) {
+      loadingElement.style.display = 'flex';
+    }
+    if (canvas) {
+      canvas.classList.add('opacity-0');
+    }
+
+    // Try to use cached config first for immediate tab display
+    let config = cachedTCPingConfig;
+    
+    // If no cached config, show loading tabs placeholder and fetch
+    if (!config) {
+      config = await loadTCPingConfig();
+    }
+    
+    if (!config || !config.targets || config.targets.length === 0) {
+      container.style.display = 'none';
+      return;
+    }
+    
+    container.style.display = 'block';
+    tcpingConfigs.set(systemId, config);
+
+    // Create tabs immediately (no loading delay for tabs)
+    const activeTarget = createTCPingTabs(systemId, config, tabsContainer);
+
+    // Initialize chart with first target (this shows the loading state)
+    if (activeTarget) {
+      // Set initial active target
+      tcpingActiveTargets.set(systemId, {
+        target: activeTarget,
+        targetName: config.targets[0].name || activeTarget
+      });
+      // Load chart data asynchronously
+      await updateTCPingChart(systemId, activeTarget, config.targets[0].name || activeTarget);
+    }
+  }
+
+  // Update tcping chart with data (incremental: true for adding new points only, false for full reload)
+  async function updateTCPingChart(systemId, target, targetName, incremental = false) {
+    const container = document.querySelector(`[data-tcping-chart-container="${systemId}"]`);
+    if (!container) return;
+
+    const canvas = container.querySelector(`[data-tcping-chart="${systemId}"]`);
+    if (!canvas) return;
+    
+    // Show loading state if this is not an incremental update
+    if (!incremental) {
+      const loadingElement = container.querySelector(`[data-tcping-loading="${systemId}"]`);
+      if (loadingElement) {
+        loadingElement.style.display = 'flex';
+      }
+      canvas.classList.add('opacity-0');
+    }
+
+    // Get system data to find client ID
+    const systemRow = document.querySelector(`[data-system-id="${systemId}"]`);
+    if (!systemRow) return;
+
+    // Get client ID from system data (assuming it's the same as system ID)
+    const clientID = systemId;
+
+    // Check if chart already exists for incremental update
+    const chartKey = `${systemId}_${target}`;
+    const existingChartData = tcpingCharts.get(chartKey);
+    
+    // Load history data
+    const historyData = await loadTCPingHistory(clientID, target);
+    
+    // Prepare chart data - only use real data from backend, no interpolation
+    // Use {x: timestamp, y: latency} format for time scale support
+    const chartData = [];
+    
+    // Ensure historyData is an array (handle null/undefined)
+    const safeHistoryData = Array.isArray(historyData) ? historyData : [];
+    
+    // Only keep data from last 24 hours
+    const now = new Date();
+    const twentyFourHoursAgo = now.getTime() - (24 * 60 * 60 * 1000);
+    
+    // Filter and sort by timestamp to ensure chronological order (real data only, no fake data)
+    const sortedData = [...safeHistoryData]
+      .filter(result => {
+        const timestamp = new Date(result.timestamp).getTime();
+        return timestamp >= twentyFourHoursAgo;
+      })
+      .sort((a, b) => {
+        return new Date(a.timestamp) - new Date(b.timestamp);
+      });
+    
+    let totalCount = 0;
+    let successCount = 0;
+    let totalLatency = 0;
+    
+    // Define packet loss threshold: latency > 1000ms (1 second) is considered packet loss
+    // This is a common threshold for TCP connections - anything over 1 second is likely a timeout/retransmission
+    // Normal network latency should be in the range of tens to hundreds of milliseconds
+    const PACKET_LOSS_THRESHOLD_MS = 1000;
+    
+    sortedData.forEach(result => {
+      const timestamp = new Date(result.timestamp);
+      totalCount++;
+      
+      let yValue = null;
+      if (result.latency !== null && result.latency !== undefined) {
+        // Filter out abnormal values (packet loss threshold)
+        if (result.latency > PACKET_LOSS_THRESHOLD_MS) {
+          // Treat as packet loss - show as null (gap in chart)
+          yValue = null;
+        } else {
+          yValue = result.latency;
+          successCount++;
+          totalLatency += result.latency;
+        }
+      }
+      
+      // Use {x: timestamp, y: latency} format for time scale
+      chartData.push({
+        x: timestamp,
+        y: yValue
+      });
+    });
+    
+    // Calculate statistics (only count valid latencies, excluding packet loss)
+    const avgLatency = successCount > 0 ? (totalLatency / successCount) : 0;
+    // Packet loss includes both null values and values above threshold
+    const packetLossCount = totalCount - successCount;
+    const packetLossRate = totalCount > 0 ? (packetLossCount / totalCount * 100) : 0;
+    
+    // Update statistics display (only for non-incremental updates or when switching targets)
+    // For incremental updates, statistics should remain unchanged to avoid flickering
+    if (!incremental) {
+      updateTCPingStats(systemId, avgLatency, packetLossRate);
+    }
+    
+    // Check if there's no data - show "No data" state instead of empty chart
+    if (sortedData.length === 0) {
+      // Hide loading state
+      const loadingElement = container.querySelector(`[data-tcping-loading="${systemId}"]`);
+      if (loadingElement) {
+        loadingElement.style.display = 'none';
+      }
+      
+      // Show "No data" state
+      const noDataElement = container.querySelector(`[data-tcping-no-data="${systemId}"]`);
+      if (noDataElement) {
+        noDataElement.classList.remove('hidden');
+        noDataElement.style.display = 'flex';
+      }
+      
+      // Hide canvas
+      if (canvas) {
+        canvas.classList.add('opacity-0');
+        canvas.style.display = 'none';
+      }
+      
+      // Destroy any existing chart
+      if (existingChartData && existingChartData.chart) {
+        try {
+          existingChartData.chart.destroy();
+    } catch (err) {
+          // Chart destroy failed silently
+        }
+        tcpingCharts.delete(chartKey);
+      }
+      
+      // Update translations for no data state
+      updateTranslations();
+      return;
+    }
+    
+    // Hide "No data" state if we have data
+    const noDataElement = container.querySelector(`[data-tcping-no-data="${systemId}"]`);
+    if (noDataElement) {
+      noDataElement.classList.add('hidden');
+      noDataElement.style.display = 'none';
+    }
+    
+    // Show canvas if we have data
+    if (canvas) {
+      canvas.style.display = 'block';
+    }
+    
+    // If chart exists and this is an incremental update, add only new data points
+    // Note: Statistics are already calculated and updated above, so they will be correct
+    if (incremental && existingChartData && existingChartData.chart) {
+      const chart = existingChartData.chart;
+      
+      // Safety check: ensure chart and canvas are still valid
+      if (!chart || !chart.canvas || !chart.canvas.parentElement) {
+        return;
+      }
+      
+      const currentData = chart.data.datasets[0].data || [];
+      
+      if (currentData.length === 0) {
+        // Chart exists but has no data, skip incremental update
+        // But statistics are already updated, so they will show correctly
+        return;
+      }
+      
+      // Use timestamp comparison for more reliable incremental updates
+      // Get the last timestamp from current data
+      const lastCurrentDataPoint = currentData[currentData.length - 1];
+      const lastCurrentTime = lastCurrentDataPoint ? lastCurrentDataPoint.x.getTime() : 0;
+      
+      // Find new data points after the last current timestamp
+      const newDataPoints = chartData.filter(point => point.x.getTime() > lastCurrentTime);
+      
+      if (newDataPoints.length > 0) {
+        chart.data.datasets[0].data.push(...newDataPoints);
+        
+        // Remove data older than 24 hours based on timestamp
+        const now = new Date();
+        const twentyFourHoursAgo = now.getTime() - (24 * 60 * 60 * 1000);
+        
+        const oldLength = chart.data.datasets[0].data.length;
+        
+        // Filter out data points older than 24 hours
+        chart.data.datasets[0].data = chart.data.datasets[0].data.filter(point => {
+          return point.x.getTime() >= twentyFourHoursAgo;
+        });
+        
+        const newLength = chart.data.datasets[0].data.length;
+        
+        // Safety check before updating chart
+        try {
+          if (chart && chart.canvas && chart.canvas.parentElement) {
+            chart.update('none'); // Update without animation
+          }
+        } catch (err) {
+          // Chart update failed silently
+        }
+        return;
+      } else {
+        // No new data, just return without updating (don't recreate chart)
+        return;
+      }
+    }
+    
+    // If incremental is true, we should have returned above - never recreate chart in incremental mode
+    if (incremental) {
+      return;
+    }
+    
+    // If no existing chart or full reload needed, destroy all charts for this system
+    const chartsToDestroy = [];
+    tcpingCharts.forEach((value, key) => {
+      if (key.startsWith(`${systemId}_`)) {
+        if (value.chart) {
+          chartsToDestroy.push(value.chart);
+        }
+        tcpingCharts.delete(key);
+      }
+    });
+    
+    // Destroy all charts
+    chartsToDestroy.forEach(chart => {
+      try {
+        chart.destroy();
+      } catch (err) {
+        // Chart destroy failed silently
+      }
+    });
+
+    // Load Chart.js from CDN if not already loaded
+    if (!window.Chart) {
+      return new Promise((resolve, reject) => {
+        // Check if script is already being loaded
+        if (document.querySelector('script[data-chartjs]')) {
+          const checkInterval = setInterval(() => {
+            if (window.Chart && window._chartjsAdapterLoaded) {
+              clearInterval(checkInterval);
+              updateTCPingChart(systemId, target, targetName).then(resolve).catch(reject);
+            }
+          }, 100);
+          setTimeout(() => {
+            clearInterval(checkInterval);
+            if (!window.Chart || !window._chartjsAdapterLoaded) {
+              reject(new Error('Chart.js loading timeout'));
+            }
+          }, 10000);
+          return;
+        }
+        
+        // Load Chart.js first
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
+        script.async = true;
+        script.setAttribute('data-chartjs', 'true');
+        script.onload = () => {
+          // Then load the date adapter for time scale support
+          const adapterScript = document.createElement('script');
+          adapterScript.src = 'https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';
+          adapterScript.async = true;
+          adapterScript.setAttribute('data-chartjs-adapter', 'true');
+          adapterScript.onload = () => {
+            window._chartjsAdapterLoaded = true;
+            updateTCPingChart(systemId, target, targetName).then(resolve).catch(reject);
+          };
+          adapterScript.onerror = () => {
+            reject(new Error('Failed to load Chart.js date adapter'));
+          };
+          document.head.appendChild(adapterScript);
+        };
+        script.onerror = () => {
+          reject(new Error('Failed to load Chart.js'));
+        };
+        document.head.appendChild(script);
+      });
+    }
+    
+    // Also check if adapter is loaded
+    if (!window._chartjsAdapterLoaded) {
+      return new Promise((resolve, reject) => {
+        if (document.querySelector('script[data-chartjs-adapter]')) {
+          const checkInterval = setInterval(() => {
+            if (window._chartjsAdapterLoaded) {
+              clearInterval(checkInterval);
+              updateTCPingChart(systemId, target, targetName).then(resolve).catch(reject);
+            }
+          }, 100);
+          setTimeout(() => {
+            clearInterval(checkInterval);
+            if (!window._chartjsAdapterLoaded) {
+              reject(new Error('Chart.js adapter loading timeout'));
+            }
+          }, 10000);
+          return;
+        }
+        
+        const adapterScript = document.createElement('script');
+        adapterScript.src = 'https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';
+        adapterScript.async = true;
+        adapterScript.setAttribute('data-chartjs-adapter', 'true');
+        adapterScript.onload = () => {
+          window._chartjsAdapterLoaded = true;
+          updateTCPingChart(systemId, target, targetName).then(resolve).catch(reject);
+        };
+        adapterScript.onerror = () => {
+          reject(new Error('Failed to load Chart.js date adapter'));
+        };
+        document.head.appendChild(adapterScript);
+      });
+    }
+    
+    const ChartClass = window.Chart;
+
+    // Check if we have data
+    // Still create an empty chart to show the structure if no data
+
+    // Check if there's an existing chart on this canvas and destroy it
+    // This is a safety check in case the chart wasn't properly tracked
+    if (ChartClass.getChart) {
+      const existingChart = ChartClass.getChart(canvas);
+      if (existingChart) {
+        try {
+          existingChart.destroy();
+        } catch (err) {
+          // Chart destroy failed silently
+        }
+      }
+    }
+
+    // Ensure canvas has proper dimensions
+    const parent = canvas.parentElement;
+    if (parent) {
+      const rect = parent.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        canvas.width = rect.width;
+        canvas.height = rect.height;
+      }
+    }
+
+    // Create new chart
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+    
+    // Detect current theme for tooltip styling
+    const isDarkMode = document.documentElement.classList.contains('dark');
+    const tooltipBg = isDarkMode ? 'rgba(21, 21, 21, 0.95)' : 'rgba(250, 250, 250, 0.95)';
+    const tooltipTextColor = isDarkMode ? '#f5f5f5' : '#262626';
+    const tooltipBorderColor = isDarkMode ? '#404040' : '#a3a3a3';
+    
+    // Register crosshair plugin if not already registered
+    // Use a global variable to track if plugin is registered
+    if (!window.crosshairPluginRegistered) {
+      const crosshairPlugin = {
+        id: 'crosshair',
+        afterDraw: function(chart) {
+          const tooltip = chart.tooltip;
+          if (tooltip && tooltip.opacity > 0 && tooltip.dataPoints && tooltip.dataPoints.length > 0) {
+            const ctx = chart.ctx;
+            const dataPoint = tooltip.dataPoints[0];
+            const x = dataPoint.element.x;
+            const chartArea = chart.chartArea;
+            
+            // Detect current theme for crosshair color
+            const currentIsDarkMode = document.documentElement.classList.contains('dark');
+            const crosshairColor = currentIsDarkMode ? 'rgba(255, 255, 255, 0.8)' : 'rgba(38, 38, 38, 0.8)';
+            
+            // Save context state
+            ctx.save();
+            
+            // Draw vertical crosshair line (theme-aware dashed line)
+            ctx.strokeStyle = crosshairColor;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 5]); // Dashed line pattern
+            ctx.beginPath();
+            ctx.moveTo(x, chartArea.top);
+            ctx.lineTo(x, chartArea.bottom);
+            ctx.stroke();
+            
+            // Restore context state
+            ctx.restore();
+          }
+        }
+      };
+      
+      try {
+        if (ChartClass.register) {
+          ChartClass.register(crosshairPlugin);
+          window.crosshairPluginRegistered = true;
+        } else if (ChartClass.registry && ChartClass.registry.add) {
+          ChartClass.registry.add(crosshairPlugin);
+          window.crosshairPluginRegistered = true;
+        }
+      } catch (e) {
+        // Plugin registration failed silently
+      }
+    }
+    
+    const chart = new ChartClass(ctx, {
+      type: 'line',
+      data: {
+        datasets: [{
+          label: `${targetName} (ms)`,
+          data: chartData, // Use {x: timestamp, y: latency} format for time scale
+          borderColor: 'rgb(34, 197, 94)', // emerald-500
+          backgroundColor: 'rgba(34, 197, 94, 0.1)',
+          borderWidth: 2,
+          fill: false, // Don't fill area to avoid interpolation
+          tension: 0, // No curve interpolation - straight lines only
+          spanGaps: false, // Don't span gaps - this will show time gaps correctly
+          pointRadius: 0, // No points, only lines
+          pointHoverRadius: 0,
+          pointHitRadius: 5, // Keep hover area for tooltips
+          showLine: true // Ensure line is shown
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: false
+          },
+          tooltip: {
+            mode: 'index',
+            intersect: false,
+            backgroundColor: tooltipBg,
+            titleColor: tooltipTextColor,
+            bodyColor: tooltipTextColor,
+            borderColor: tooltipBorderColor,
+            borderWidth: 1,
+            padding: 12,
+            titleFont: {
+              size: 12,
+              weight: '600'
+            },
+            bodyFont: {
+              size: 11
+            },
+            displayColors: false,
+            callbacks: {
+              title: function(context) {
+                if (context.length > 0 && context[0].label) {
+                  return context[0].label;
+                }
+                return '';
+              },
+              label: function(context) {
+                const value = context.parsed.y;
+                if (value === null || value === undefined) {
+                  return 'Timeout/Failure';
+                }
+                return `${value.toFixed(2)} ms`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            type: 'time', // Use time scale for proper time-based X-axis
+            // Let Chart.js auto-calculate min/max based on actual data points
+            time: {
+              displayFormats: {
+                second: 'HH:mm:ss',
+                minute: 'HH:mm',
+                hour: 'HH:mm',
+                day: 'MM/dd HH:mm'
+              },
+              tooltipFormat: 'yyyy-MM-dd HH:mm:ss' // Tooltip format with date and seconds
+            },
+            ticks: {
+              color: '#a3a3a3',
+              font: {
+                size: 10
+              },
+              maxRotation: 0,
+              minRotation: 0,
+              maxTicksLimit: 6, // Show up to 6 ticks
+              autoSkip: true,
+              autoSkipPadding: 30
+            },
+            grid: {
+              display: false, // Hide vertical grid lines (only show horizontal)
+              drawOnChartArea: false
+            },
+            bounds: 'data' // Fit axis to data range
+          },
+          y: {
+            beginAtZero: true,
+            ticks: {
+              color: '#a3a3a3',
+              font: {
+                size: 10
+              },
+              callback: function(value) {
+                return value + ' ms';
+              },
+              // Make grid lines sparser by limiting number of ticks
+              maxTicksLimit: 6 // Limit to 6 ticks to make grid lines sparser
+            },
+            grid: {
+              color: 'rgba(64, 64, 64, 0.3)',
+              display: true, // Show horizontal grid lines only
+              // Make grid lines sparser by using stepSize
+              drawOnChartArea: true
+            },
+            border: {
+              display: false // Hide the Y-axis border line (left vertical line)
+            }
+          }
+        },
+        interaction: {
+          mode: 'nearest',
+          axis: 'x',
+          intersect: false
+        },
+        onHover: function(event, activeElements) {
+          // Keep default cursor style (don't change to crosshair)
+          // The crosshair line will be drawn by the plugin
+        }
+      }
+    });
+
+    tcpingCharts.set(chartKey, { chart, target: targetName });
+    
+    // Hide loading state and show chart (only if not incremental update)
+    if (!incremental) {
+      const loadingElement = container.querySelector(`[data-tcping-loading="${systemId}"]`);
+      if (loadingElement) {
+        loadingElement.style.display = 'none';
+      }
+      if (canvas) {
+        canvas.classList.remove('opacity-0');
+        
+        // Hide "No data" state when chart is created
+        const noDataElement = container.querySelector(`[data-tcping-no-data="${systemId}"]`);
+        if (noDataElement) {
+          noDataElement.classList.add('hidden');
+          noDataElement.style.display = 'none';
+        }
+      }
+    }
+  }
+  
+  // Update TCPing statistics display
+  function updateTCPingStats(systemId, avgLatency, packetLossRate) {
+    const statsContainer = document.querySelector(`[data-tcping-stats="${systemId}"]`);
+    if (!statsContainer) return;
+    
+    const avgElement = statsContainer.querySelector(`[data-tcping-avg="${systemId}"]`);
+    const lossElement = statsContainer.querySelector(`[data-tcping-loss="${systemId}"]`);
+    
+    if (avgElement) {
+      if (avgLatency > 0) {
+        avgElement.textContent = `${avgLatency.toFixed(2)} ms`;
+      } else {
+        avgElement.textContent = '-';
+      }
+    }
+    
+    if (lossElement) {
+      if (packetLossRate > 0) {
+        lossElement.textContent = `${packetLossRate.toFixed(2)}%`;
+      } else {
+        lossElement.textContent = '0.00%';
+      }
+    }
+  }
+  
+  // Setup row click handlers for expand/collapse
+  const setupRowClickHandlers = (container) => {
+    if (!container || container.dataset.rowClickSetup) return;
+    container.dataset.rowClickSetup = 'true';
+    
+    container.addEventListener('click', (e) => {
+      // Don't expand if clicking on copy button or other interactive elements
+      if (e.target.closest('.copy-btn') || e.target.closest('button')) {
+        return;
+      }
+      
+      // Don't expand/collapse if clicking inside the details section
+      if (e.target.closest('.system-details')) {
+        return;
+      }
+      
+      // Find the clicked row - only trigger on the main row, not details section
+      const rowElement = e.target.closest('[data-system-id]');
+      if (!rowElement) return;
+      
+      // Make sure we're not clicking inside the details section
+      const systemRow = rowElement.closest('.system-row');
+      if (!systemRow) return;
+      
+      // Check if click is inside details section
+      const detailsSection = systemRow.querySelector('.system-details');
+      if (detailsSection && detailsSection.contains(e.target)) {
+        return;
+      }
+      
+      const systemId = rowElement.dataset.systemId;
+      
+      if (detailsSection) {
+        // Toggle visibility with animation
+        const isExpanding = detailsSection.classList.contains('hidden');
+        
+        if (isExpanding) {
+          // Expanding - show and animate in
+          detailsSection.classList.remove('hidden');
+          detailsSection.style.maxHeight = '0';
+          detailsSection.style.opacity = '0';
+          
+          // Trigger reflow
+          detailsSection.offsetHeight;
+          
+          // Animate to full height
+          detailsSection.style.transition = 'max-height 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease-out';
+          detailsSection.style.maxHeight = detailsSection.scrollHeight + 'px';
+          detailsSection.style.opacity = '1';
+          
+          // Clean up after animation
+          setTimeout(() => {
+            detailsSection.style.maxHeight = '';
+            detailsSection.style.transition = '';
+          }, 300);
+          
+          // Initialize tcping chart when expanding
+          setTimeout(() => initializeTCPingChart(systemId), 100);
+          
+          // Update translations when expanding
+          setTimeout(() => updateTranslations(), 0);
+          
+          rowElement.setAttribute('aria-expanded', 'true');
+        } else {
+          // Collapsing - animate out then hide
+          detailsSection.style.maxHeight = detailsSection.scrollHeight + 'px';
+          detailsSection.style.opacity = '1';
+          
+          // Trigger reflow
+          detailsSection.offsetHeight;
+          
+          // Animate to zero
+          detailsSection.style.transition = 'max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease-in';
+          detailsSection.style.maxHeight = '0';
+          detailsSection.style.opacity = '0';
+          
+          // Hide after animation
+          setTimeout(() => {
+            detailsSection.classList.add('hidden');
+            detailsSection.style.maxHeight = '';
+            detailsSection.style.opacity = '';
+            detailsSection.style.transition = '';
+          }, 250);
+          
+          rowElement.setAttribute('aria-expanded', 'false');
+        }
+      }
+    });
+  };
+  
+  // Smart render with incremental updates
+  const render = async (items) => {
+    if (!body) return;
+    
+    if (loadingIndicator) loadingIndicator.style.display = 'none';
+    
+    if (!items || items.length === 0) {
+      showEmpty();
+      currentData.clear();
+      return;
+    }
+    
+    // Check if tcping is configured before rendering
+    let tcpingConfigured = false;
+    try {
+      const config = await loadTCPingConfig();
+      tcpingConfigured = config && config.targets && config.targets.length > 0;
+    } catch (err) {
+      // Config check failed silently
+    }
+    
+    // Create new data map with normalized items
+    const newData = new Map();
+    items.forEach(item => {
+      const normalized = normalizeItem(item);
+      normalized.original = item; // Keep original for rendering
+      newData.set(item.id, normalized);
+    });
+    
+    // Initial render - if no existing data, render everything
+    if (currentData.size === 0) {
+      body.innerHTML = items.map(item => renderRow(item, tcpingConfigured)).join('');
+      currentData = newData;
+      
+      // Add staggered entrance animation for initial load
+      const systemRows = body.querySelectorAll('.system-row');
+      systemRows.forEach((row, index) => {
+        row.style.opacity = '0';
+        row.classList.add('animate-stagger-in');
+        row.style.animationDelay = `${index * 50}ms`;
+        // Clean up after animation
+        setTimeout(() => {
+          row.style.opacity = '';
+          row.classList.remove('animate-stagger-in');
+          row.style.animationDelay = '';
+        }, 400 + index * 50);
+      });
+      
+      await loadOSIcons();
+      await loadFlagIcons();
+      setupCopyButtons(body);
+      setupRowClickHandlers(body);
+      // Update translations after DOM is ready
+      setTimeout(() => updateTranslations(), 0);
+      // Calculate and set server name column width based on longest name
+      setTimeout(() => adjustServerNameColumnWidth(), 0);
+      return;
+    }
+    
+    // Get existing rows - now looking for .system-row instead of [data-system-id]
+    const existingRows = body.querySelectorAll('.system-row');
+    const existingRowMap = new Map();
+    existingRows.forEach(systemRow => {
+      const rowElement = systemRow.querySelector('[data-system-id]');
+      const id = rowElement?.dataset.systemId;
+      if (id) {
+        existingRowMap.set(id, rowElement);
+      }
+    });
+    
+    // Track which rows need updates
+    let hasChanges = false;
+    const rowsToUpdate = [];
+    const rowsToAdd = [];
+    const rowsToRemove = [];
+    
+    // Check for updates and new items
+    items.forEach((item, index) => {
+      const normalizedItem = newData.get(item.id);
+      const oldItem = currentData.get(item.id);
+      const existingRow = existingRowMap.get(item.id);
+      
+      if (!existingRow) {
+        // New row needs to be added
+        rowsToAdd.push({ item, index });
+        hasChanges = true;
+      } else if (hasChanged(oldItem, normalizedItem)) {
+        // Existing row needs update - use original item for rendering
+        rowsToUpdate.push({ row: existingRow, item: item });
+        hasChanges = true;
+      } else if (oldItem && oldItem.order !== normalizedItem.order) {
+        // Order changed, need to reorder
+        hasChanges = true;
+      }
+    });
+    
+    // Check for removed items
+    currentData.forEach((oldItem, id) => {
+      if (!newData.has(id)) {
+        rowsToRemove.push(id);
+        hasChanges = true;
+      }
+    });
+    
+    // Check if order changed (for sorting) - check BEFORE early return
+    const currentOrder = Array.from(body.children).map(systemRow => {
+      const rowElement = systemRow.querySelector('[data-system-id]');
+      return rowElement?.dataset.systemId;
+    }).filter(Boolean);
+    const desiredOrder = items.map(item => item.id);
+    const orderChanged = currentOrder.length === desiredOrder.length && 
+                         JSON.stringify(currentOrder) !== JSON.stringify(desiredOrder);
+    
+    // Always update currentData first, before any DOM operations
+    // This ensures that updateRow has access to the correct old data
+    const previousData = new Map(currentData);
+    currentData = newData;
+    
+    // If no changes AND order hasn't changed, skip update completely
+    if (!hasChanges && !orderChanged && existingRows.length === items.length) {
+      // Cache already updated above, just return
+      return; // Silent skip - no DOM operations
+    }
+    
+    // Remove deleted rows
+    rowsToRemove.forEach(id => {
+      const rowElement = existingRowMap.get(id);
+      if (rowElement) {
+        const systemRow = rowElement.closest('.system-row');
+        if (systemRow) {
+          systemRow.remove();
+        } else {
+          rowElement.remove();
+        }
+      }
+    });
+    
+    // Update existing rows (only changed cells) - batch updates
+    if (rowsToUpdate.length > 0) {
+      rowsToUpdate.forEach(({ row, item }) => {
+        // Get previous item data before updating
+        const previousItem = previousData.get(item.id);
+        updateRow(row, item, previousItem);
+      });
+      // Only load OS icons if OS changed
+      const osChanged = rowsToUpdate.some(({ item }) => {
+        const old = currentData.get(item.id);
+        return old && old.os_icon !== item.os_icon;
+      });
+      if (osChanged) {
+        setTimeout(() => loadOSIcons(), 0);
+      }
+      
+      // Load flag icons if location changed
+      const locationChanged = rowsToUpdate.some(({ item }) => {
+        const old = currentData.get(item.id);
+        return old && old.location !== item.location;
+      });
+      if (locationChanged) {
+        setTimeout(() => loadFlagIcons(), 0);
+      }
+    }
+    
+    // Add new rows
+    if (rowsToAdd.length > 0) {
+      rowsToAdd.forEach(({ item, index }, addIndex) => {
+        // Find insertion point
+        let insertBefore = null;
+        for (let i = index + 1; i < items.length; i++) {
+          const nextId = items[i].id;
+          const nextRow = body.querySelector(`[data-system-id="${nextId}"]`);
+          if (nextRow) {
+            insertBefore = nextRow;
+            break;
+          }
+        }
+        
+        // Use cached tcping config status or check if needed
+        const rowHTML = renderRow(item, tcpingConfigured);
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = rowHTML;
+        const systemRowElement = tempDiv.firstElementChild;
+        if (systemRowElement) {
+          // Add entrance animation for new rows
+          systemRowElement.classList.add('animate-scale-in');
+          systemRowElement.style.animationDelay = `${addIndex * 50}ms`;
+          
+          // Find the system-row to insert before
+          let insertBeforeSystemRow = null;
+          if (insertBefore) {
+            insertBeforeSystemRow = insertBefore.closest('.system-row');
+          }
+          if (insertBeforeSystemRow) {
+            body.insertBefore(systemRowElement, insertBeforeSystemRow);
+          } else {
+            body.appendChild(systemRowElement);
+          }
+          
+          // Clean up animation class after animation completes
+          setTimeout(() => {
+            systemRowElement.classList.remove('animate-scale-in');
+            systemRowElement.style.animationDelay = '';
+          }, 300 + addIndex * 50);
+        }
+      });
+      
+      await loadOSIcons();
+      await loadFlagIcons();
+      setupCopyButtons(body);
+      setupRowClickHandlers(body);
+      // Update translations after DOM is ready
+      setTimeout(() => updateTranslations(), 0);
+      // Calculate and set server name column width based on longest name
+      setTimeout(() => adjustServerNameColumnWidth(), 0);
+    }
+    
+    // Handle reordering if needed - ALWAYS check order, even if no other changes
+    // This ensures sorting works correctly
+    if (orderChanged) {
+      // Reorder rows without full re-render
+      const rowMap = new Map();
+      Array.from(body.children).forEach(systemRow => {
+        const rowElement = systemRow.querySelector('[data-system-id]');
+        const id = rowElement?.dataset.systemId;
+        if (id) {
+          rowMap.set(id, systemRow);
+        }
+      });
+      
+      // Re-append in correct order
+      items.forEach(item => {
+        const row = rowMap.get(item.id);
+        if (row && row.parentNode) {
+          body.appendChild(row); // appendChild moves existing element
+        }
+      });
+    }
+    
+    // Cache already updated at the beginning of the function
+    
+    // Recalculate server name column width after any DOM changes
+    setTimeout(() => adjustServerNameColumnWidth(), 0);
+  };
+
+  // Fetch data from backend - ONLY source of truth
+  async function loadData() {
+    try {
+      const data = await fetchSystemMetrics(apiBase);
+      
+      if (data.length === 0) {
+        showEmpty();
+      } else {
+        // Apply filter first, then sorting
+        const filteredData = filterSystems(data);
+        const sortedData = sortSystems(filteredData);
+        await render(sortedData);
+      }
+    } catch (err) {
+      if (loadingIndicator) {
+        loadingIndicator.innerHTML = `
+          <div class="text-center">
+            <p class="text-sm text-red-400">Failed to connect to backend</p>
+            <p class="text-xs text-[#525252] dark:text-[#525252] text-[#737373] mt-1">${err.message}</p>
+          </div>
+        `;
+      }
+    }
+  }
+
+  // Connect to SSE for real-time updates
+  function connectSSE() {
+    if (eventSource) {
+      eventSource.close();
+    }
+
+    eventSource = new EventSource(`${apiBase}/api/events`);
+
+    eventSource.addEventListener('connected', (e) => {
+      // Connected to update stream
+    });
+
+      eventSource.addEventListener('update', (e) => {
+        try {
+          const update = JSON.parse(e.data);
+          
+          // Reload data when any update is received (incremental update will handle changes)
+          if (update.type === 'metric_updated' || update.type === 'order_updated' || update.type === 'metric_deleted') {
+            // Force reload to get latest status
+            loadData();
+            
+            // Update tcping charts for visible expanded rows (incremental update only)
+            document.querySelectorAll('.system-details:not(.hidden)').forEach(detailsSection => {
+              const systemId = detailsSection.dataset.detailsId;
+              if (systemId) {
+                // Use the current active target for this system, not just any chart
+                const activeTargetInfo = tcpingActiveTargets.get(systemId);
+                if (activeTargetInfo) {
+                  // Use incremental update - only add new data points, don't recreate chart
+                  // This will update the chart but NOT recalculate statistics (to avoid overwriting)
+                  updateTCPingChart(systemId, activeTargetInfo.target, activeTargetInfo.targetName, true);
+                } else {
+                  // Fallback: find any chart for this system (for backward compatibility)
+                  const chartEntry = Array.from(tcpingCharts.entries()).find(([key]) => key.startsWith(`${systemId}_`));
+                  if (chartEntry) {
+                    const [key, value] = chartEntry;
+                    const target = key.split('_').slice(1).join('_'); // Get target from key
+                    const targetName = value.target;
+                    // Use incremental update - only add new data points, don't recreate chart
+                    updateTCPingChart(systemId, target, targetName, true);
+                  }
+                }
+              }
+            });
+      }
+    } catch (err) {
+      // SSE parse error silently
+    }
+      });
+
+    eventSource.onerror = (err) => {
+      eventSource.close();
+      // Reconnect after 5 seconds
+      setTimeout(connectSSE, 5000);
+    };
+  }
+
+  // Setup filter input handler
+  function setupFilterInput() {
+    const filterInput = document.getElementById('system-filter-input');
+    if (!filterInput) return;
+
+    filterInput.addEventListener('input', (e) => {
+      currentFilter = e.target.value;
+      // Reload data to apply filter
+      loadData();
+    });
+
+    // Also handle Enter key
+    filterInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        currentFilter = e.target.value;
+        loadData();
+  }
+    });
+  }
+
+  // Initial load - wait for DOM to be ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      setupFilterInput();
+      loadData();
+      connectSSE();
+      // Initial translation update
+      updateTranslations();
+      // Preload TCPing config for faster tab display
+      preloadTCPingConfig();
+    });
+  } else {
+    setupFilterInput();
+    loadData();
+    connectSSE();
+    // Initial translation update
+    updateTranslations();
+    // Preload TCPing config for faster tab display
+    preloadTCPingConfig();
+  }
+
+  // Cleanup on page unload
+  // Recalculate column width on window resize (with debounce)
+  let resizeTimeout = null;
+  window.addEventListener('resize', () => {
+    if (resizeTimeout) {
+      clearTimeout(resizeTimeout);
+    }
+    resizeTimeout = setTimeout(() => {
+      adjustServerNameColumnWidthDebounced();
+      resizeTimeout = null;
+    }, 250);
+  });
+
+  window.addEventListener('beforeunload', () => {
+    if (eventSource) {
+      eventSource.close();
+    }
+  });
+</script>

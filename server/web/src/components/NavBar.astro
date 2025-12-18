@@ -1,0 +1,239 @@
+---
+import Icon from './Icon.astro';
+
+interface Props {
+  isAdmin?: boolean;
+}
+
+const { isAdmin = false } = Astro.props;
+---
+
+<nav class="mx-auto mt-2 sm:mt-3 max-w-7xl flex items-center justify-between rounded-xl border border-[#404040]/50 bg-[#1c1c1c] dark:border-[#404040]/50 dark:bg-[#1c1c1c] border-[#a3a3a3]/50 bg-white px-3 sm:px-4 md:px-6 py-2 sm:py-3">
+  <!-- Logo -->
+  <a href="/" class="flex items-center gap-1.5 sm:gap-2">
+    <svg width="20" height="20" class="sm:w-6 sm:h-6 shrink-0 monitor-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="--monitor-stroke: #24292f;">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6.5 12h2l2-6 3 18 2.5-12h2" style="stroke: var(--monitor-stroke);">
+        <animate attributeName="opacity" values="0.5;1;0.5" dur="2s" repeatCount="indefinite"/>
+      </path>
+      <path stroke-linecap="round" stroke-width="1.5" d="M3 12h2M19 12h2" style="stroke: var(--monitor-stroke);">
+        <animate attributeName="opacity" values="0.3;0.8;0.3" dur="2s" repeatCount="indefinite"/>
+      </path>
+      <path stroke-linecap="round" stroke-width="1.5" opacity="0.5" d="M1 12h1M22 12h1" style="stroke: var(--monitor-stroke);">
+        <animate attributeName="opacity" values="0.2;0.5;0.2" dur="2s" repeatCount="indefinite"/>
+      </path>
+      <circle cx="12" cy="12" r="9" stroke-width="1.5" opacity="0.2" style="stroke: var(--monitor-stroke);">
+        <animate attributeName="opacity" values="0.1;0.3;0.1" dur="2s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="12" cy="12" r="5" stroke-width="1.5" opacity="0.4" style="stroke: var(--monitor-stroke);">
+        <animate attributeName="opacity" values="0.2;0.6;0.2" dur="2s" repeatCount="indefinite"/>
+      </circle>
+    </svg>
+    <span class="text-lg sm:text-xl md:text-2xl font-bold tracking-tight text-[#262626] dark:text-white">Pulse</span>
+  </a>
+
+  <!-- Right Side Icons -->
+  <div class="flex items-center gap-0.5 sm:gap-1">
+    <button id="language-btn" class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-all duration-200 hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-[#262626] dark:hover:text-[#e5e5e5] active:scale-90" aria-label="language" title="切换语言">
+      <Icon name="languages" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px] transition-transform duration-200" />
+      </button>
+    <button id="theme-btn" class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-all duration-200 hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-[#262626] dark:hover:text-[#e5e5e5] active:scale-90" aria-label="theme" title="切换主题">
+      <Icon id="theme-icon-moon" name="moon" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px] hidden dark:block transition-all duration-300" />
+      <Icon id="theme-icon-sun" name="sun" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px] block dark:hidden transition-all duration-300" />
+      </button>
+    {isAdmin ? (
+      <a href="/" class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-all duration-200 hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-[#262626] dark:hover:text-[#e5e5e5] active:scale-90" aria-label="home">
+        <Icon name="home" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px] transition-transform duration-200" />
+      </a>
+    ) : (
+      <a href="/admin" class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-all duration-200 hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-[#262626] dark:hover:text-[#e5e5e5] active:scale-90" aria-label="admin">
+      <Icon name="user" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px] transition-transform duration-200" />
+    </a>
+    )}
+    </div>
+  </nav>
+
+<script>
+  (function() {
+    // Language management
+    function getSystemLanguage() {
+      return navigator.language || (navigator.languages && navigator.languages[0]) || 'en';
+    }
+
+    function getStoredLanguage() {
+      return localStorage.getItem('preferred-language');
+    }
+
+    function setLanguage(lang) {
+      localStorage.setItem('preferred-language', lang);
+      document.documentElement.lang = lang;
+      // Trigger language change event for other components
+      window.dispatchEvent(new CustomEvent('languagechange', { detail: { language: lang } }));
+    }
+
+    function getCurrentLanguage() {
+      const stored = getStoredLanguage();
+      if (stored) {
+        return stored;
+      }
+      // Default to English, not system language
+      return 'en';
+    }
+
+    function toggleLanguage() {
+      const current = getCurrentLanguage();
+      const newLang = current === 'zh' ? 'en' : 'zh';
+      setLanguage(newLang);
+      updateLanguageButton();
+    }
+
+    function updateLanguageButton() {
+      const btn = document.getElementById('language-btn');
+      if (btn) {
+        // Update tooltip/aria-label based on current language
+        const current = getCurrentLanguage();
+        btn.setAttribute('aria-label', current === 'zh' ? 'Switch to English' : '切换到中文');
+        btn.setAttribute('title', current === 'zh' ? 'Switch to English' : '切换到中文');
+      }
+    }
+
+    // Theme management
+    function getSystemTheme() {
+      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        return 'dark';
+      }
+      return 'light';
+    }
+
+    function getStoredTheme() {
+      return localStorage.getItem('preferred-theme');
+    }
+
+    function setTheme(theme) {
+      localStorage.setItem('preferred-theme', theme);
+      applyTheme(theme);
+    }
+
+    function getCurrentTheme() {
+      const stored = getStoredTheme();
+      if (stored === 'dark' || stored === 'light') {
+        return stored;
+      }
+      // Default to dark theme, not system theme
+      return 'dark';
+    }
+
+    function toggleTheme() {
+      const current = getCurrentTheme();
+      const newTheme = current === 'dark' ? 'light' : 'dark';
+      setTheme(newTheme);
+    }
+
+    function applyTheme(theme) {
+      const html = document.documentElement;
+      const body = document.body;
+      if (theme === 'dark') {
+        html.classList.add('dark');
+        html.classList.remove('light');
+        body.classList.add('dark');
+        body.classList.remove('light');
+      } else {
+        html.classList.add('light');
+        html.classList.remove('dark');
+        body.classList.add('light');
+        body.classList.remove('dark');
+      }
+      updateThemeIcon(theme);
+      // Trigger theme change event for other components
+      window.dispatchEvent(new CustomEvent('themechange', { detail: { theme: theme } }));
+    }
+
+    function updateThemeIcon(theme) {
+      const moonIcon = document.getElementById('theme-icon-moon');
+      const sunIcon = document.getElementById('theme-icon-sun');
+      if (moonIcon && sunIcon) {
+        // Add rotation animation on switch
+        const showIcon = theme === 'dark' ? moonIcon : sunIcon;
+        const hideIcon = theme === 'dark' ? sunIcon : moonIcon;
+        
+        // Animate out
+        hideIcon.style.transform = 'rotate(-90deg) scale(0.5)';
+        hideIcon.style.opacity = '0';
+        
+        setTimeout(() => {
+          hideIcon.classList.remove('block');
+          hideIcon.classList.add('hidden');
+          hideIcon.style.transform = '';
+          hideIcon.style.opacity = '';
+          
+          // Animate in
+          showIcon.style.transform = 'rotate(90deg) scale(0.5)';
+          showIcon.style.opacity = '0';
+          showIcon.classList.remove('hidden');
+          showIcon.classList.add('block');
+          
+          // Trigger reflow
+          showIcon.offsetHeight;
+          
+          showIcon.style.transform = 'rotate(0deg) scale(1)';
+          showIcon.style.opacity = '1';
+        }, 150);
+      }
+      
+      // Update monitor icon stroke color based on theme
+      const monitorIcon = document.querySelector('.monitor-icon');
+      if (monitorIcon) {
+        if (theme === 'dark') {
+          monitorIcon.style.setProperty('--monitor-stroke', '#c9d1d9');
+        } else {
+          monitorIcon.style.setProperty('--monitor-stroke', '#24292f');
+        }
+      }
+    }
+
+    // System theme listener removed - we use fixed defaults (English and Dark)
+
+    // Initialize on page load
+    function init() {
+      // Initialize language
+      const currentLang = getCurrentLanguage();
+      setLanguage(currentLang);
+      updateLanguageButton();
+
+      // Initialize theme
+      const currentTheme = getCurrentTheme();
+      applyTheme(currentTheme);
+      
+      // Initialize monitor icon color
+      const monitorIcon = document.querySelector('.monitor-icon');
+      if (monitorIcon) {
+        if (currentTheme === 'dark') {
+          monitorIcon.style.setProperty('--monitor-stroke', '#c9d1d9');
+        } else {
+          monitorIcon.style.setProperty('--monitor-stroke', '#24292f');
+        }
+      }
+
+      // Setup event listeners
+      const languageBtn = document.getElementById('language-btn');
+      const themeBtn = document.getElementById('theme-btn');
+
+      if (languageBtn) {
+        languageBtn.addEventListener('click', toggleLanguage);
+      }
+
+      if (themeBtn) {
+        themeBtn.addEventListener('click', toggleTheme);
+      }
+
+      // System theme listener removed - we use fixed defaults
+    }
+
+    // Run initialization
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  })();
+</script>
+

@@ -1,0 +1,32 @@
+---
+import '../styles/global.css';
+import NavBar from '../components/NavBar.astro';
+import SystemTable from '../components/SystemTable.astro';
+import Footer from '../components/Footer.astro';
+
+// API base will be auto-detected by client-side script
+// Can be overridden by PUBLIC_API_BASE environment variable
+const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
+---
+
+<html lang="en" class="dark overflow-x-hidden">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Pulse Monitor</title>
+    <!-- Preload Chart.js for faster TCPing chart rendering -->
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" as="script" crossorigin="anonymous" />
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js" as="script" crossorigin="anonymous" />
+  </head>
+<body class="min-h-screen overflow-x-hidden flex flex-col bg-[#151515] dark:bg-[#151515] bg-white text-[#f5f5f5] dark:text-[#f5f5f5] text-[#151515]">
+    <div class="px-2 sm:px-4 md:px-6 animate-navbar">
+    <NavBar />
+    </div>
+    <main class="flex-1 px-2 sm:px-4 md:px-6 pt-2 sm:pt-3 pb-4 sm:pb-6 animate-content">
+      <SystemTable apiBase={apiBase} pollMs={5000} />
+    </main>
+    <Footer />
+  </body>
+</html>
+

@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+.astro/
+coverage/
+
+# Compiled binaries
+*.exe
+probe-server
+probe-client
+
+# Database and data files
+*.db
+*.db-journal
+data/
+
+# IDE and OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Docker artifacts (keep Dockerfile and docker-compose)
+.docker/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

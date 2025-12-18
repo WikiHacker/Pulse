@@ -1,0 +1,2985 @@
+---
+import Icon from './Icon.astro';
+
+const { apiBase: apiBaseProp } = Astro.props ?? {};
+const apiBase = apiBaseProp ?? '';
+---
+
+<div class="mx-auto mt-2 sm:mt-3 max-w-7xl">
+  <!-- System List -->
+  <div class="mb-4 sm:mb-6 rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-3 sm:p-4 md:p-6">
+    <div class="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <h2 id="system-list-title" class="text-lg sm:text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="systemList">Service List</h2>
+      <div class="flex items-center gap-1.5 sm:gap-2">
+        <button id="add-system-btn" class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-emerald-400 dark:hover:text-emerald-400 hover:text-emerald-600" title="" data-title-en="Add Service" data-title-zh="添加服务">
+          <Icon name="plus" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
+        </button>
+        <button id="tcping-config-btn" class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-blue-400 dark:hover:text-blue-400 hover:text-blue-600" title="" data-title-en="TCPing Settings" data-title-zh="TCPing 设置">
+          <Icon name="settings" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
+        </button>
+        <button id="refresh-btn" class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-[#262626] dark:hover:text-[#e5e5e5]" title="" data-title-en="Refresh" data-title-zh="刷新">
+          <Icon name="refresh-cw" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
+        </button>
+        <button id="change-password-btn" class="rounded-lg p-1.5 sm:p-2 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-amber-400 dark:hover:text-amber-400 hover:text-amber-600" title="" data-title-en="Change Password" data-title-zh="修改密码">
+          <Icon name="lock" size={16} class="w-4 h-4 sm:w-[18px] sm:h-[18px]" />
+        </button>
+      </div>
+    </div>
+
+    <div id="systems-list" class="space-y-3 max-h-[600px] overflow-y-auto scrollbar-hide" data-draggable-list>
+      <div class="flex items-center justify-center py-12">
+        <div id="loading-systems-text" class="text-sm text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="loadingSystems">Loading systems...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add System Modal -->
+  <div id="add-system-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 dark:bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
+      <div class="mb-4 flex items-center justify-between">
+        <h2 id="add-new-system-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="addNewSystem">Add New System</h2>
+        <button id="close-add-modal-btn" class="rounded-lg p-1 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-[#262626] dark:hover:text-[#e5e5e5]">
+          <Icon name="x" size={20} />
+        </button>
+      </div>
+
+      <form id="add-system-form" class="space-y-4">
+        <div>
+          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="systemName">System Name</span> <span class="text-red-400">*</span></label>
+          <input
+            type="text"
+            name="name"
+            required
+            placeholder=""
+            data-placeholder-en="My Server"
+            data-placeholder-zh="我的服务器"
+            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+          />
+          <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="displayNameForThisSystem">Display name for this system</p>
+        </div>
+
+        <div class="rounded-lg bg-[#282828] dark:bg-[#282828] bg-[#f5f5f5] p-3">
+          <p class="text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]">
+            <strong data-translate="note">Note:</strong> <span data-translate="noteContent">IP addresses, location, OS and metrics are automatically updated by the agent and cannot be edited manually.</span>
+          </p>
+        </div>
+
+        <div id="add-form-message" class="hidden text-sm"></div>
+
+        <div class="flex gap-3">
+          <button
+            type="button"
+            id="cancel-add-btn"
+            class="flex-1 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] dark:text-[#d4d4d4] transition-colors hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5]"
+          >
+            <span data-translate="cancel">Cancel</span>
+          </button>
+          <button
+            type="submit"
+            class="flex-1 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-600"
+          >
+            <span data-translate="addSystem">Add System</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Edit System Modal -->
+  <div id="edit-system-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 dark:bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
+      <div class="mb-4 flex items-center justify-between">
+        <h2 id="edit-system-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="editSystem">Edit System</h2>
+        <button id="close-edit-modal-btn" class="rounded-lg p-1 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-[#262626] dark:hover:text-[#e5e5e5]">
+          <Icon name="x" size={20} />
+        </button>
+      </div>
+
+      <form id="edit-system-form" class="space-y-4">
+        <input type="hidden" name="original-id" value="" />
+        
+        <div>
+          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="systemName">System Name</span> <span class="text-red-400">*</span></label>
+          <input
+            type="text"
+            name="name"
+            required
+            placeholder=""
+            data-placeholder-en="My Server"
+            data-placeholder-zh="我的服务器"
+            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+          />
+        </div>
+
+        <div class="rounded-lg bg-[#282828] dark:bg-[#282828] bg-[#f5f5f5] p-3">
+          <p class="text-xs text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]">
+            <strong data-translate="note">Note:</strong> <span data-translate="noteContent">IP addresses, location, OS and metrics are automatically updated by the agent and cannot be edited manually.</span>
+          </p>
+        </div>
+
+        <div id="edit-form-message" class="hidden text-sm"></div>
+
+        <div class="flex gap-3">
+          <button
+            type="button"
+            id="cancel-edit-btn"
+            class="flex-1 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] dark:text-[#d4d4d4] transition-colors hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5]"
+          >
+            <span data-translate="cancel">Cancel</span>
+          </button>
+          <button
+            type="submit"
+            class="flex-1 rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-600"
+          >
+            <span data-translate="updateSystem">Update System</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete Confirmation Modal -->
+  <div id="delete-confirm-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 dark:bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
+      <div class="mb-4">
+        <div class="mb-3 flex items-center gap-3">
+          <div class="rounded-full bg-red-500/10 p-2">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-400">
+              <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+            </svg>
+          </div>
+          <h2 id="delete-system-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="deleteSystem">Delete System</h2>
+        </div>
+        <p class="text-sm text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]">
+          <span data-translate="areYouSureYouWantToDelete">Are you sure you want to delete</span> <span class="font-medium text-[#262626] dark:text-[#d4d4d4]" id="delete-system-name"></span>?
+        </p>
+        <p class="mt-3 text-xs text-red-400/80">
+          ⚠️ <span data-translate="thisActionCannotBeUndone">This action cannot be undone.</span>
+        </p>
+      </div>
+
+      <div class="flex gap-3">
+        <button
+          id="cancel-delete-btn"
+          class="flex-1 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] dark:text-[#d4d4d4] transition-colors hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5]"
+        >
+          <span data-translate="cancel">Cancel</span>
+        </button>
+        <button
+          id="confirm-delete-btn"
+          class="flex-1 rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-600"
+        >
+          <span data-translate="delete">Delete</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TCPing Config Modal -->
+  <div id="tcping-config-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 dark:bg-black/50 bg-black/30 backdrop-blur-sm overflow-hidden" data-modal>
+    <div class="mx-2 sm:mx-4 w-full max-w-lg max-h-[90vh] flex flex-col rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white shadow-2xl overflow-hidden" data-modal-content>
+      <!-- Header - Fixed -->
+      <div class="flex items-center justify-between p-4 sm:p-6 pb-0 shrink-0">
+        <h2 id="tcping-config-title" class="text-lg sm:text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="tcpingSettings">TCPing Settings</h2>
+        <button id="close-tcping-config-modal-btn" class="rounded-lg p-1 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-[#262626] dark:hover:text-[#e5e5e5]">
+          <Icon name="x" size={20} />
+        </button>
+      </div>
+
+      <!-- Scrollable Content -->
+      <div class="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 pt-4 scrollbar-hide">
+        <form id="tcping-config-form" class="space-y-4">
+          <div>
+            <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]">
+              <span data-translate="pollingInterval">Polling Interval</span> <span class="text-red-400">*</span>
+            </label>
+            <div class="flex items-center gap-2">
+              <input
+                type="number"
+                id="tcping-interval"
+                name="interval"
+                min="1"
+                required
+                class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              />
+              <span class="text-sm text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] shrink-0" data-translate="seconds">seconds</span>
+            </div>
+            <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="pollingIntervalDesc">How often to send tcping requests to clients</p>
+          </div>
+
+          <div>
+            <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]">
+              <span data-translate="tcpingTargets">TCPing Targets</span> <span class="text-red-400">*</span>
+            </label>
+            <div id="tcping-targets-container" class="space-y-2 sm:space-y-2">
+              <!-- Targets will be dynamically added here -->
+            </div>
+            <button
+              type="button"
+              id="add-target-btn"
+              class="mt-2 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-1.5 text-xs font-medium text-[#262626] dark:text-[#d4d4d4] transition-colors hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5]"
+            >
+              <span data-translate="addTarget">+ Add Target</span>
+            </button>
+            <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="targetFormatDesc">Format: name and address (e.g., Google DNS, 8.8.8.8:53)</p>
+          </div>
+
+          <div id="tcping-config-message" class="hidden text-sm"></div>
+
+          <div class="flex gap-3 pt-2">
+            <button
+              type="button"
+              id="cancel-tcping-config-btn"
+              class="flex-1 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] dark:text-[#d4d4d4] transition-colors hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5]"
+            >
+              <span data-translate="cancel">Cancel</span>
+            </button>
+            <button
+              type="submit"
+              class="flex-1 rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-blue-600"
+            >
+              <span data-translate="save">Save</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Change Password Modal -->
+  <div id="change-password-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 dark:bg-black/50 bg-black/30 backdrop-blur-sm" data-modal>
+    <div class="mx-4 w-full max-w-md rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-6 shadow-2xl" data-modal-content>
+      <div class="mb-4 flex items-center justify-between">
+        <h2 id="change-password-title" class="text-xl font-semibold text-[#262626] dark:text-[#f5f5f5]" data-translate="changePassword">Change Password</h2>
+        <button id="close-change-password-modal-btn" class="rounded-lg p-1 text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-[#262626] dark:hover:text-[#e5e5e5]">
+          <Icon name="x" size={20} />
+        </button>
+      </div>
+
+      <form id="change-password-form" class="space-y-4">
+        <div>
+          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="currentPassword">Current Password</span> <span class="text-red-400">*</span></label>
+          <input
+            type="password"
+            name="currentPassword"
+            required
+            placeholder=""
+            data-placeholder-en="Enter current password"
+            data-placeholder-zh="输入当前密码"
+            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+          />
+        </div>
+
+        <div>
+          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="newPassword">New Password</span> <span class="text-red-400">*</span></label>
+          <input
+            type="password"
+            name="newPassword"
+            required
+            placeholder=""
+            data-placeholder-en="Enter new password (min 6 characters)"
+            data-placeholder-zh="输入新密码（至少6个字符）"
+            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+          />
+          <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#525252]" data-translate="passwordMinLength">Password must be at least 6 characters long</p>
+        </div>
+
+        <div>
+          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="confirmNewPassword">Confirm New Password</span> <span class="text-red-400">*</span></label>
+          <input
+            type="password"
+            name="confirmNewPassword"
+            required
+            placeholder=""
+            data-placeholder-en="Confirm new password"
+            data-placeholder-zh="确认新密码"
+            class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+          />
+        </div>
+
+        <div id="change-password-form-message" class="hidden text-sm"></div>
+
+        <div class="flex gap-3">
+          <button
+            type="button"
+            id="cancel-change-password-btn"
+            class="flex-1 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-4 py-2 text-sm font-semibold text-[#262626] dark:text-[#d4d4d4] transition-colors hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5]"
+          >
+            <span data-translate="cancel">Cancel</span>
+          </button>
+          <button
+            type="submit"
+            class="flex-1 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-600"
+          >
+            <span data-translate="changePassword">Change Password</span>
+          </button>
+    </div>
+      </form>
+  </div>
+  </div>
+
+</div>
+
+<div
+  id="admin-root"
+  data-api-base={apiBase}
+  style="display: none;"
+></div>
+
+<style>
+  /* Hide scrollbar for systems-list but keep scrolling functionality */
+  .scrollbar-hide {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;  /* Chrome, Safari and Opera */
+  }
+</style>
+
+<script is:inline>
+  const root = document.getElementById('admin-root');
+  
+  const getApiBase = () => {
+    if (root?.dataset.apiBase && root.dataset.apiBase.trim() !== '') {
+      return root.dataset.apiBase.trim();
+    }
+    // Use current origin (works with nginx reverse proxy)
+    return window.location.origin;
+  };
+
+  // ========================================
+  // Modal Animation Utilities
+  // ========================================
+  
+  // Store original parent for modals (to restore after closing)
+  const modalOriginalParents = new Map();
+  
+  // Open modal with animation - moves modal to body to avoid transform issues
+  function openModalWithAnimation(modal) {
+    if (!modal) return;
+    
+    const content = modal.querySelector('[data-modal-content]');
+    
+    // Store original parent if not already stored
+    if (!modalOriginalParents.has(modal) && modal.parentElement) {
+      modalOriginalParents.set(modal, {
+        parent: modal.parentElement,
+        nextSibling: modal.nextSibling
+      });
+    }
+    
+    // Move modal to body to avoid transform stacking context issues
+    document.body.appendChild(modal);
+    
+    // Show modal
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    
+    // Apply entrance animations
+    modal.classList.add('modal-backdrop-enter');
+    if (content) {
+      content.classList.add('modal-content-enter');
+    }
+    
+    // Clean up animation classes after animation completes
+    setTimeout(() => {
+      modal.classList.remove('modal-backdrop-enter');
+      if (content) {
+        content.classList.remove('modal-content-enter');
+      }
+    }, 250);
+  }
+  
+  // Close modal with animation
+  function closeModalWithAnimation(modal, callback) {
+    if (!modal) return;
+    
+    const content = modal.querySelector('[data-modal-content]');
+    
+    // Apply exit animations
+    modal.classList.add('modal-backdrop-exit');
+    if (content) {
+      content.classList.add('modal-content-exit');
+    }
+    
+    // Hide modal after animation completes
+    setTimeout(() => {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      modal.classList.remove('modal-backdrop-exit');
+      if (content) {
+        content.classList.remove('modal-content-exit');
+      }
+      
+      // Move modal back to original parent (optional, helps keep DOM clean)
+      const originalInfo = modalOriginalParents.get(modal);
+      if (originalInfo && originalInfo.parent) {
+        if (originalInfo.nextSibling) {
+          originalInfo.parent.insertBefore(modal, originalInfo.nextSibling);
+        } else {
+          originalInfo.parent.appendChild(modal);
+        }
+      }
+      
+      // Execute callback if provided
+      if (callback && typeof callback === 'function') {
+        callback();
+      }
+    }, 150);
+  }
+
+  // Format bytes to human readable format (B, KiB, MiB, GiB, TiB)
+  function formatBytes(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const value = bytes / Math.pow(k, i);
+    // Format to 2 decimal places, but remove trailing zeros
+    const formatted = value.toFixed(2).replace(/\.?0+$/, '');
+    return `${formatted} ${sizes[i]}`;
+  }
+
+  // Get CPU brand icon based on CPU model
+  function getCPUBrandIcon(cpuModel) {
+    if (!cpuModel) return null;
+    const modelLower = cpuModel.toLowerCase();
+    if (modelLower.includes('intel')) {
+      return 'logos:intel';
+    } else if (modelLower.includes('amd') || modelLower.includes('epyc') || modelLower.includes('ryzen')) {
+      return 'logos:amd';
+    }
+    return null;
+  }
+
+  // Load CPU brand icons
+  const loadCPUBrandIcons = async () => {
+    const cpuIconElements = document.querySelectorAll('.cpu-brand-icon');
+    for (const el of cpuIconElements) {
+      const iconName = el.dataset.icon;
+      if (!iconName) continue;
+      try {
+        // CPU brand icon: 32px to match two IP rows height (16px + 16px)
+        const response = await fetch(`https://api.iconify.design/${iconName}.svg?height=32`);
+        if (response.ok) {
+          const svg = await response.text();
+          el.innerHTML = svg;
+          const svgEl = el.querySelector('svg');
+          if (svgEl) {
+            svgEl.setAttribute('class', 'block leading-none');
+            svgEl.style.margin = '0';
+            svgEl.style.padding = '0';
+            svgEl.style.display = 'block';
+            svgEl.style.verticalAlign = 'middle';
+            svgEl.style.lineHeight = '0';
+            svgEl.style.height = '32px';
+            svgEl.style.width = 'auto';
+            // Ensure parent container doesn't affect row height
+            el.style.margin = '0';
+            el.style.padding = '0';
+            el.style.lineHeight = '0';
+            el.style.display = 'flex';
+            el.style.alignItems = 'center';
+            el.style.justifyContent = 'center';
+            el.style.height = '32px';
+            el.style.overflow = 'visible';
+          }
+        }
+      } catch (e) {
+        // Icon load failed silently
+      }
+    }
+  };
+
+  const apiBase = getApiBase();
+
+  // SSE connection for real-time updates
+  let eventSource = null;
+
+  // Drag and drop state
+  let draggedElement = null;
+  let draggedIndex = null;
+  let autoScrollInterval = null;
+
+  // Cache current data for comparison (incremental updates)
+  let currentData = new Map(); // key: system ID, value: system data
+
+  // Add Modal controls
+  const addModal = document.getElementById('add-system-modal');
+  const addBtn = document.getElementById('add-system-btn');
+  const closeAddBtn = document.getElementById('close-add-modal-btn');
+  const cancelAddBtn = document.getElementById('cancel-add-btn');
+
+  function openAddModal() {
+    if (addModal) {
+      const form = document.getElementById('add-system-form');
+      if (form) form.reset();
+      openModalWithAnimation(addModal);
+    }
+  }
+
+  function closeAddModal() {
+    closeModalWithAnimation(addModal, () => {
+      const form = document.getElementById('add-system-form');
+      if (form) {
+        form.reset();
+        // Clear any success messages
+        const messageEl = document.getElementById('add-form-message');
+        if (messageEl) {
+          messageEl.classList.add('hidden');
+          messageEl.textContent = '';
+          messageEl.className = 'hidden text-sm';
+        }
+      }
+    });
+  }
+
+  addBtn?.addEventListener('click', openAddModal);
+  closeAddBtn?.addEventListener('click', closeAddModal);
+  cancelAddBtn?.addEventListener('click', closeAddModal);
+  addModal?.addEventListener('click', (e) => {
+    if (e.target === addModal) closeAddModal();
+  });
+
+  // Edit Modal controls
+  const editModal = document.getElementById('edit-system-modal');
+  const closeEditBtn = document.getElementById('close-edit-modal-btn');
+  const cancelEditBtn = document.getElementById('cancel-edit-btn');
+
+  function openEditModal(system) {
+    const form = document.getElementById('edit-system-form');
+    
+    if (form && editModal) {
+      // Fill form with system data (only Name, ID is hidden)
+      form.elements['original-id'].value = system.id;
+      form.elements['name'].value = system.name || '';
+      
+      // Open modal with animation
+      openModalWithAnimation(editModal);
+    } else {
+      // Form or modal not found
+    }
+  }
+
+  function closeEditModal() {
+    closeModalWithAnimation(editModal, () => {
+      const form = document.getElementById('edit-system-form');
+      if (form) {
+        form.reset();
+        // Clear any success messages
+        const messageEl = document.getElementById('edit-form-message');
+        if (messageEl) {
+          messageEl.classList.add('hidden');
+          messageEl.textContent = '';
+          messageEl.className = 'hidden text-sm';
+        }
+        // Reset submit button
+        const submitBtn = form.querySelector('button[type="submit"]');
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Update System';
+        }
+      }
+    });
+  }
+
+  closeEditBtn?.addEventListener('click', closeEditModal);
+  cancelEditBtn?.addEventListener('click', closeEditModal);
+  editModal?.addEventListener('click', (e) => {
+    if (e.target === editModal) closeEditModal();
+  });
+
+  // Delete Confirmation Modal controls
+  const deleteModal = document.getElementById('delete-confirm-modal');
+  const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
+  const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+  let pendingDeleteId = null;
+  let pendingDeleteName = null;
+
+  function openDeleteModal(systemId, systemName) {
+    if (deleteModal) {
+      pendingDeleteId = systemId;
+      pendingDeleteName = systemName;
+      document.getElementById('delete-system-name').textContent = `"${systemName}"`;
+      openModalWithAnimation(deleteModal);
+    }
+  }
+
+  function closeDeleteModal() {
+    closeModalWithAnimation(deleteModal, () => {
+      pendingDeleteId = null;
+      pendingDeleteName = null;
+    });
+  }
+
+  cancelDeleteBtn?.addEventListener('click', closeDeleteModal);
+  deleteModal?.addEventListener('click', (e) => {
+    if (e.target === deleteModal) closeDeleteModal();
+  });
+
+  confirmDeleteBtn?.addEventListener('click', async () => {
+    if (!pendingDeleteId) return;
+
+    const systemId = pendingDeleteId;
+    const systemName = pendingDeleteName;
+
+    // Disable button during request
+    if (confirmDeleteBtn) {
+      confirmDeleteBtn.disabled = true;
+      confirmDeleteBtn.textContent = 'Deleting...';
+    }
+
+    try {
+      const res = await fetch(`${apiBase}/api/metrics/${systemId}`, {
+        method: 'DELETE',
+      });
+
+      if (res.ok) {
+        closeDeleteModal();
+        await loadSystems();
+      } else {
+        const error = await res.text();
+        throw new Error(error || `HTTP ${res.status}`);
+      }
+    } catch (err) {
+      alert('Failed to delete system: ' + err.message);
+    } finally {
+      if (confirmDeleteBtn) {
+        confirmDeleteBtn.disabled = false;
+        confirmDeleteBtn.textContent = 'Delete';
+      }
+    }
+  });
+
+
+  // Normalize data for comparison (ensure consistent types)
+  function normalizeItem(item) {
+    return {
+      id: String(item.id || ''),
+      name: String(item.name || ''),
+      location: String(item.location || ''),
+      virtualization_type: String(item.virtualization_type || ''),
+      os: String(item.os || ''),
+      ipv4: String(item.ipv4 || ''),
+      ipv6: String(item.ipv6 || ''),
+      total_net_in_bytes: Number(item.total_net_in_bytes || 0),
+      total_net_out_bytes: Number(item.total_net_out_bytes || 0),
+      cpu_model: String(item.cpu_model || ''),
+      order: Number(item.order || 0)
+    };
+      }
+
+  // Check if two system objects have changed
+  function hasChanged(oldItem, newItem) {
+    if (!oldItem) return true; // New item
+    if (!newItem) return false; // Deleted item
+    
+    // Normalize both items for consistent comparison
+    const old = normalizeItem(oldItem);
+    const new_ = normalizeItem(newItem);
+    
+    // Compare relevant fields
+    return (
+      old.name !== new_.name ||
+      old.location !== new_.location ||
+      old.virtualization_type !== new_.virtualization_type ||
+      old.os !== new_.os ||
+      old.ipv4 !== new_.ipv4 ||
+      old.ipv6 !== new_.ipv6 ||
+      old.total_net_in_bytes !== new_.total_net_in_bytes ||
+      old.total_net_out_bytes !== new_.total_net_out_bytes ||
+      old.cpu_model !== new_.cpu_model ||
+      old.order !== new_.order
+    );
+  }
+
+  // Render a single system item
+  function renderSystemItem(system, index) {
+    return `
+        <div class="draggable-item rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white p-4 cursor-move transition-all hover:border-[#525252] dark:hover:border-[#525252] hover:border-[#737373] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] min-h-[60px] relative" draggable="true" data-system-id="${system.id}" data-index="${index}">
+            <!-- CPU Brand Icon - Background, centered horizontally -->
+            ${(() => {
+              const cpuBrandIcon = getCPUBrandIcon(system.cpu_model);
+              if (cpuBrandIcon) {
+                return `
+                <div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center pointer-events-none opacity-20" style="z-index: 0;">
+                  <span class="cpu-brand-icon block leading-none" data-icon="${cpuBrandIcon}"></span>
+                </div>
+                `;
+              }
+              return '';
+            })()}
+            
+            <div class="flex items-center gap-3 min-h-[28px] relative" style="z-index: 1;">
+            <!-- Edit Button -->
+            <button 
+              class="edit-btn shrink-0 rounded-lg p-2 text-[#737373] dark:text-[#737373] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-blue-400 dark:hover:text-blue-400 hover:text-blue-600 self-center"
+              data-system='${JSON.stringify(system).replace(/'/g, "&apos;")}'
+              title="Edit system"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            </button>
+
+            <!-- System Info -->
+            <div class="flex-1 min-w-0 min-h-[28px] flex items-center">
+              <!-- Left: Name and IPs (all aligned) -->
+                <div class="flex items-center gap-4">
+                <!-- Left: Name -->
+                  <div class="flex flex-col gap-1 min-w-0 flex-shrink-0 min-h-[28px] justify-center">
+                    <div class="flex items-start gap-2 min-h-[20px] min-w-0">
+                      <span class="system-name text-sm font-semibold text-[#262626] dark:text-[#f5f5f5] break-words min-w-0">${system.name}</span>
+                  </div>
+                    <!-- Other Info (Virtualization Type, OS) -->
+                    <div class="flex flex-wrap gap-2 text-xs text-[#737373] dark:text-[#737373] text-[#404040] min-h-[16px]">
+                      ${system.virtualization_type ? `<span class="system-virtualization-type">${system.virtualization_type}</span>` : ''}
+                      ${system.os ? `<span class="system-os">• ${system.os}</span>` : ''}
+                      ${!system.virtualization_type && !system.os ? '<span class="invisible">-</span>' : ''}
+                  </div>
+                </div>
+                
+                  ${(system.ipv4 || system.ipv6 || system.total_net_in_bytes || system.total_net_out_bytes) ? `
+                  <!-- IP Addresses and Network Traffic (Vertical, aligned with name row) - Hidden on mobile -->
+                  <div class="ip-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[28px] justify-center flex-shrink-0">
+                  ${system.ipv4 ? `
+                  <!-- IPv4 Row with Inbound Traffic -->
+                  <div class="flex items-center gap-1.5 min-h-[16px]">
+                    <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv4:</span>
+                    <span class="system-ipv4 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${system.ipv4}</span>
+                    <button class="copy-ip-btn shrink-0 rounded p-1 text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] transition-colors" data-ip="${system.ipv4}" title="Copy IPv4">
+                      <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                      </svg>
+                      <svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+                        <path d="M20 6L9 17l-5-5"/>
+                      </svg>
+                    </button>
+                    <span class="flex-1"></span>
+                    ${system.total_net_in_bytes ? `<span class="system-total-net-in text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left">In: ${formatBytes(system.total_net_in_bytes)}</span>` : '<span class="min-w-[80px]"></span>'}
+                  </div>
+                  ` : ''}
+                  ${system.ipv6 ? `
+                  <!-- IPv6 Row with Outbound Traffic -->
+                  <div class="flex items-center gap-1.5 min-h-[16px]">
+                    <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv6:</span>
+                    <span class="system-ipv6 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${system.ipv6}</span>
+                    <button class="copy-ip-btn shrink-0 rounded p-1 text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] transition-colors" data-ip="${system.ipv6}" title="Copy IPv6">
+                      <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                      </svg>
+                      <svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+                        <path d="M20 6L9 17l-5-5"/>
+                      </svg>
+                    </button>
+                    <span class="flex-1"></span>
+                    ${system.total_net_out_bytes ? `<span class="system-total-net-out text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left">Out: ${formatBytes(system.total_net_out_bytes)}</span>` : '<span class="min-w-[80px]"></span>'}
+                  </div>
+                  ` : (system.ipv4 && !system.ipv6) ? `
+                  <!-- IPv6 Row (placeholder with Outbound Traffic) -->
+                  <div class="flex items-center gap-1.5 min-h-[16px]">
+                    <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv6:</span>
+                    <span class="text-[#737373] dark:text-[#737373] text-[#404040]">-</span>
+                    <span class="flex-1"></span>
+                    ${system.total_net_out_bytes ? `<span class="system-total-net-out text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left">Out: ${formatBytes(system.total_net_out_bytes)}</span>` : '<span class="min-w-[80px]"></span>'}
+                </div>
+                ` : ''}
+                </div>
+                ` : `
+                <!-- Placeholder for IP section when no IPs available - Hidden on mobile -->
+                <div class="ip-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[28px] justify-center invisible">
+                  <div class="min-h-[16px]">-</div>
+                </div>
+                `}
+              </div>
+            </div>
+
+            <!-- Copy Linux Install Command Button (mingcute:linux-fill) -->
+            <button 
+              class="copy-linux-cmd-btn shrink-0 rounded-lg p-2 text-[#737373] dark:text-[#737373] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-orange-400 dark:hover:text-orange-400 hover:text-orange-600 self-center"
+              data-system-id="${system.id}"
+              title="Copy Linux install command"
+            >
+              <svg class="linux-icon" width="16" height="16" viewBox="0 0 24 24">
+                <g fill="none" fill-rule="evenodd"><path d="m12.594 23.258l-.012.002l-.071.035l-.02.004l-.014-.004l-.071-.036q-.016-.004-.024.006l-.004.01l-.017.428l.005.02l.01.013l.104.074l.015.004l.012-.004l.104-.074l.012-.016l.004-.017l-.017-.427q-.004-.016-.016-.018m.264-.113l-.014.002l-.184.093l-.01.01l-.003.011l.018.43l.005.012l.008.008l.201.092q.019.005.029-.008l.004-.014l-.034-.614q-.005-.019-.02-.022m-.715.002a.02.02 0 0 0-.027.006l-.006.014l-.034.614q.001.018.017.024l.015-.002l.201-.093l.01-.008l.003-.011l.018-.43l-.003-.012l-.01-.01z"/><path fill="currentColor" d="M8.264 15.29a1 1 0 0 1 .822.522l1.892 3.493a1.809 1.809 0 0 1-1.856 2.65l-3.93-.582a1 1 0 0 1-.672-1.563l.623-.89l-.174-.984a1 1 0 0 1 .811-1.159l.985-.173l.623-.89a1 1 0 0 1 .876-.425Zm6.347-.024a1 1 0 0 1 .858-.043l.116.057l.94.543l.966-.259a1 1 0 0 1 1.188.596l.037.111l.259.966l.94.543a1 1 0 0 1 .154 1.623l-.103.078l-3.315 2.188a1.809 1.809 0 0 1-2.805-1.46l.003-.158l.238-3.965a1 1 0 0 1 .524-.82M12 2a4 4 0 0 1 4 4v1c0 1.214.502 2.267 1.166 3.354l.736 1.165c.1.16.195.315.28.457c.32.541.628 1.14.788 1.781a7 7 0 0 1 .194 1.358a2 2 0 0 0-1.932-.516l-.565.151l-.582-.336a2 2 0 0 0-2.996 1.613l-.238 3.965c-.021.345.022.684.121 1.003l-.269.005h-.406q-.114 0-.226-.004c.22-.71.152-1.492-.214-2.167l-1.891-3.493a2 2 0 0 0-3.397-.195l-.385.55l-.33.058a5.4 5.4 0 0 1 .024-1.16c.037-.285.086-.567.152-.832c.198-.792.535-1.459.857-2.02l.437-.74C7.74 10.28 8 9.722 8 9V6a4 4 0 0 1 4-4m-1.438 5.778l-.822.41c.224.597.572 1.156.897 1.6l.204.269l.184.225l.081.094l.25-.141l.329-.197c.176-.109.368-.232.566-.367c.604-.412 1.225-.91 1.662-1.427l-2.316-.58a1.5 1.5 0 0 0-1.035.114"/></g>
+              </svg>
+              <svg class="check-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+                <path d="M20 6L9 17l-5-5"/>
+              </svg>
+            </button>
+
+            <!-- Copy Windows Install Command Button (mingcute:windows-fill) -->
+            <button 
+              class="copy-windows-cmd-btn shrink-0 rounded-lg p-2 text-[#737373] dark:text-[#737373] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-blue-400 dark:hover:text-blue-400 hover:text-blue-600 self-center"
+              data-system-id="${system.id}"
+              title="Copy Windows install command"
+            >
+              <svg class="windows-icon" width="16" height="16" viewBox="0 0 24 24">
+                <g fill="none"><path d="m12.593 23.258l-.011.002l-.071.035l-.02.004l-.014-.004l-.071-.035q-.016-.005-.024.005l-.004.01l-.017.428l.005.02l.01.013l.104.074l.015.004l.012-.004l.104-.074l.012-.016l.004-.017l-.017-.427q-.004-.016-.017-.018m.265-.113l-.013.002l-.185.093l-.01.01l-.003.011l.018.43l.005.012l.008.007l.201.093q.019.005.029-.008l.004-.014l-.034-.614q-.005-.018-.02-.022m-.715.002a.02.02 0 0 0-.027.006l-.006.014l-.034.614q.001.018.017.024l.015-.002l.201-.093l.01-.008l.004-.011l.017-.43l-.003-.012l-.01-.01z"/><path fill="currentColor" d="M21 13v7.434a1.5 1.5 0 0 1-1.553 1.499l-.133-.011L12 21.008V13zm-11 0v7.758l-5.248-.656A2 2 0 0 1 3 18.117V13zm9.314-10.922a1.5 1.5 0 0 1 1.68 1.355l.006.133V11h-9V2.992zM10 3.242V11H3V5.883a2 2 0 0 1 1.752-1.985z"/></g>
+              </svg>
+              <svg class="check-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+                <path d="M20 6L9 17l-5-5"/>
+              </svg>
+            </button>
+
+            <!-- Delete Button -->
+            <button 
+              class="delete-btn shrink-0 rounded-lg p-2 text-[#737373] dark:text-[#737373] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-red-400 dark:hover:text-red-400 hover:text-red-600 self-center"
+              data-system-id="${system.id}"
+              data-system-name="${system.name}"
+              title="Delete system"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      `;
+  }
+
+  // Update a single system item in the DOM - only update changed fields
+  function updateSystemItem(itemElement, item) {
+    if (!itemElement || !item) return;
+    
+    // Validate item has required properties
+    if (!item.id) {
+      return;
+    }
+    
+    // Get cached old item for comparison
+    const oldItemNormalized = currentData.get(item.id);
+    if (!oldItemNormalized) {
+      // Item not in cache - this shouldn't happen, but if it does, skip update
+      // The item should be re-rendered instead
+      return;
+    }
+    
+    // Normalize new item for comparison (ensure item is valid)
+    const newItemNormalized = normalizeItem(item);
+    
+    // Update system name
+    if (oldItemNormalized.name !== newItemNormalized.name) {
+      const nameSpan = itemElement.querySelector('.system-name');
+      if (nameSpan) {
+        nameSpan.textContent = item.name;
+      }
+    }
+    
+    // Update location and OS - handle creation/deletion
+    // Find the info container (the div containing location and OS)
+    // It's the second child div inside the flex-col container
+    const nameContainer = itemElement.querySelector('.flex.flex-col.gap-1.flex-shrink-0');
+    const infoContainer = nameContainer?.querySelector('.flex.flex-wrap.gap-2.text-xs');
+    if (!infoContainer) {
+      // If container doesn't exist, we can't update - this shouldn't happen
+    } else {
+      // Update virtualization type (replacing location)
+      if (oldItemNormalized.virtualization_type !== newItemNormalized.virtualization_type) {
+        let virtualizationSpan = itemElement.querySelector('.system-virtualization-type');
+        if (item.virtualization_type) {
+          // Virtualization type exists - update or create
+          if (virtualizationSpan) {
+            virtualizationSpan.textContent = item.virtualization_type;
+          } else {
+            // Create new virtualization type span
+            virtualizationSpan = document.createElement('span');
+            virtualizationSpan.className = 'system-virtualization-type';
+            virtualizationSpan.textContent = item.virtualization_type;
+            // Insert before OS if it exists, otherwise before invisible placeholder or at start
+            const osSpan = infoContainer.querySelector('.system-os');
+            const placeholder = infoContainer.querySelector('.invisible');
+            if (osSpan) {
+              infoContainer.insertBefore(virtualizationSpan, osSpan);
+            } else if (placeholder) {
+              infoContainer.insertBefore(virtualizationSpan, placeholder);
+            } else {
+              infoContainer.appendChild(virtualizationSpan);
+            }
+          }
+        } else {
+          // Virtualization type removed - delete span
+          if (virtualizationSpan) {
+            virtualizationSpan.remove();
+          }
+        }
+      }
+      
+      // Update OS
+      if (oldItemNormalized.os !== newItemNormalized.os) {
+        let osSpan = itemElement.querySelector('.system-os');
+        if (item.os) {
+          // OS exists - update or create
+          if (osSpan) {
+            osSpan.textContent = `• ${item.os}`;
+          } else {
+            // Create new OS span
+            osSpan = document.createElement('span');
+            osSpan.className = 'system-os';
+            osSpan.textContent = `• ${item.os}`;
+            // Insert after virtualization type if it exists, otherwise before invisible placeholder or at start
+            const virtualizationSpan = infoContainer.querySelector('.system-virtualization-type');
+            const placeholder = infoContainer.querySelector('.invisible');
+            if (virtualizationSpan) {
+              virtualizationSpan.insertAdjacentElement('afterend', osSpan);
+            } else if (placeholder) {
+              infoContainer.insertBefore(osSpan, placeholder);
+            } else {
+              infoContainer.appendChild(osSpan);
+            }
+          }
+        } else {
+          // OS removed - delete span
+          if (osSpan) {
+            osSpan.remove();
+          }
+        }
+      }
+      
+      // Update CPU brand icon in the background (absolute positioned, centered)
+      if (oldItemNormalized.cpu_model !== newItemNormalized.cpu_model) {
+        const draggableItem = itemElement; // The root draggable-item
+        // Find existing icon container by looking for the cpu-brand-icon span's parent
+        const cpuBrandIconSpan = draggableItem.querySelector('.cpu-brand-icon');
+        const existingIconContainer = cpuBrandIconSpan?.parentElement;
+        const cpuBrandIcon = getCPUBrandIcon(item.cpu_model);
+        
+        if (cpuBrandIcon) {
+          if (existingIconContainer) {
+            // Update existing icon
+            const iconSpan = existingIconContainer.querySelector('.cpu-brand-icon');
+            if (iconSpan) {
+              iconSpan.dataset.icon = cpuBrandIcon;
+              iconSpan.innerHTML = '';
+              loadCPUBrandIcons();
+            }
+          } else {
+            // Create new icon container in the center (absolute positioning, background)
+            const iconContainer = document.createElement('div');
+            iconContainer.className = 'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center pointer-events-none opacity-20';
+            iconContainer.style.zIndex = '0';
+            const iconSpan = document.createElement('span');
+            iconSpan.className = 'cpu-brand-icon block leading-none';
+            iconSpan.dataset.icon = cpuBrandIcon;
+            iconContainer.appendChild(iconSpan);
+            draggableItem.appendChild(iconContainer);
+            loadCPUBrandIcons();
+          }
+        } else if (existingIconContainer) {
+          // Remove icon container if no brand detected
+          existingIconContainer.remove();
+        }
+      }
+      
+      // Update placeholder visibility
+      // Find info container by looking for the container with virtualization type or OS
+      // Reuse the infoContainer from above if available, otherwise find it again
+      let infoContainerForPlaceholder = infoContainer;
+      if (!infoContainerForPlaceholder) {
+        const nameContainerForPlaceholder = itemElement.querySelector('.flex.flex-col.gap-1.flex-shrink-0');
+        infoContainerForPlaceholder = nameContainerForPlaceholder ? nameContainerForPlaceholder.querySelector('.flex.flex-wrap.gap-2.text-xs') : null;
+      }
+      if (infoContainerForPlaceholder) {
+        const placeholder = infoContainerForPlaceholder.querySelector('.invisible');
+        const hasVirtualizationType = itemElement.querySelector('.system-virtualization-type');
+        const hasOS = itemElement.querySelector('.system-os');
+        
+        if (hasVirtualizationType || hasOS) {
+          // Has content - remove placeholder if exists
+          if (placeholder) {
+            placeholder.remove();
+          }
+        } else {
+          // No content - add placeholder if doesn't exist
+          if (!placeholder) {
+            const placeholderSpan = document.createElement('span');
+            placeholderSpan.className = 'invisible';
+            placeholderSpan.textContent = '-';
+            infoContainerForPlaceholder.appendChild(placeholderSpan);
+          }
+        }
+      }
+    }
+    
+    // Update IPv4 - handle creation/deletion of IP rows
+    // Also handle case where IP container doesn't exist but we need to create it
+    // Find the container that holds both name and IP sections
+    const nameAndIpContainer = itemElement.querySelector('.flex.items-center.gap-4');
+    if (!nameAndIpContainer) {
+      return; // Can't update without container
+    }
+    let ipContainer = nameAndIpContainer.querySelector('.ip-info-container');
+    // Also check for invisible placeholder
+    if (!ipContainer) {
+      ipContainer = nameAndIpContainer.querySelector('.invisible');
+    }
+    const ipv4Row = itemElement.querySelector('.system-ipv4')?.closest('.flex.items-center');
+    
+    if (oldItemNormalized.ipv4 !== newItemNormalized.ipv4) {
+      // IP address changed - handle creation/deletion of IP rows
+      
+      if (item.ipv4) {
+        // IP exists - update or create row
+        if (ipv4Row) {
+          // Update existing row
+          const ipv4Span = ipv4Row.querySelector('.system-ipv4');
+          if (ipv4Span) {
+            ipv4Span.textContent = item.ipv4;
+          }
+          const ipv4CopyBtn = ipv4Row.querySelector('[data-ip]');
+          if (ipv4CopyBtn) {
+            ipv4CopyBtn.dataset.ip = item.ipv4;
+            ipv4CopyBtn.title = 'Copy IPv4';
+          }
+          // Also update traffic stats if changed (even if IP didn't change)
+          if (oldItemNormalized.total_net_in_bytes !== newItemNormalized.total_net_in_bytes) {
+            let netInSpan = ipv4Row.querySelector('.system-total-net-in');
+            let spacer = ipv4Row.querySelector('.flex-1');
+            if (!spacer) {
+              spacer = document.createElement('span');
+              spacer.className = 'flex-1';
+              ipv4Row.appendChild(spacer);
+            }
+            if (item && item.total_net_in_bytes && item.total_net_in_bytes > 0) {
+              const formattedIn = typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B';
+              if (netInSpan) {
+                netInSpan.textContent = `In: ${formattedIn}`;
+              } else {
+                netInSpan = document.createElement('span');
+                netInSpan.className = 'system-total-net-in text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left';
+                netInSpan.textContent = `In: ${formattedIn}`;
+                ipv4Row.appendChild(netInSpan);
+              }
+            } else if (netInSpan) {
+              netInSpan.remove();
+            }
+          }
+        } else {
+          // Need to create IPv4 row
+          if (ipContainer) {
+            // Container exists (might be invisible placeholder)
+            // Remove invisible class if present
+            ipContainer.classList.remove('invisible');
+            // Clear placeholder content - find any child div that looks like placeholder
+            // The placeholder has class "min-h-[16px]" and contains "-"
+            const placeholder = Array.from(ipContainer.children).find(child => {
+              const hasMinHeight = child.classList.toString().includes('min-h') || 
+                                   child.style.minHeight || 
+                                   getComputedStyle(child).minHeight !== '0px';
+              const hasDash = child.textContent && child.textContent.trim() === '-';
+              return hasMinHeight && hasDash;
+            });
+            if (placeholder) {
+              placeholder.remove();
+            }
+            
+            // Create new IPv4 row
+            const netInDisplay = (item.total_net_in_bytes && item.total_net_in_bytes > 0) ? `<span class="flex-1"></span><span class="system-total-net-in text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>` : '<span class="flex-1"></span><span class="min-w-[80px]"></span>';
+            const ipv4RowHTML = `
+              <div class="flex items-center gap-1.5 min-h-[16px]">
+                <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] shrink-0">IPv4:</span>
+                <span class="system-ipv4 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${item.ipv4}</span>
+                <button class="copy-ip-btn shrink-0 rounded p-1 text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] transition-colors" data-ip="${item.ipv4}" title="Copy IPv4">
+                  <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                  </svg>
+                  <svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+                    <path d="M20 6L9 17l-5-5"/>
+                  </svg>
+                </button>
+                ${netInDisplay}
+              </div>
+            `;
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = ipv4RowHTML.trim();
+            const newRow = tempDiv.firstElementChild;
+            if (newRow && ipContainer) {
+              // Insert before IPv6 row if it exists, otherwise append
+              const ipv6Row = ipContainer.querySelector('.system-ipv6')?.closest('.flex.items-center');
+              if (ipv6Row) {
+                ipContainer.insertBefore(newRow, ipv6Row);
+              } else {
+                ipContainer.appendChild(newRow);
+              }
+            }
+          } else if (nameAndIpContainer) {
+            // No container exists, need to create it
+            const netInDisplay = (item.total_net_in_bytes && item.total_net_in_bytes > 0) ? `<span class="flex-1"></span><span class="system-total-net-in text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>` : '<span class="flex-1"></span><span class="min-w-[80px]"></span>';
+            const ipv6Placeholder = (!item.ipv6) ? `
+                <div class="flex items-center gap-1.5 min-h-[16px]">
+                  <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv6:</span>
+                  <span class="text-[#737373] dark:text-[#737373] text-[#525252]">-</span>
+                  <span class="flex-1"></span>
+                  ${(item.total_net_out_bytes && item.total_net_out_bytes > 0) ? `<span class="system-total-net-out text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>` : '<span class="min-w-[80px]"></span>'}
+                </div>
+            ` : '';
+            const ipContainerHTML = `
+              <div class="ip-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[28px] justify-center flex-shrink-0">
+                <div class="flex items-center gap-1.5 min-h-[16px]">
+                  <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv4:</span>
+                  <span class="system-ipv4 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${item.ipv4}</span>
+                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] transition-colors" data-ip="${item.ipv4}" title="Copy IPv4">
+                    <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                    </svg>
+                    <svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+                      <path d="M20 6L9 17l-5-5"/>
+                    </svg>
+                  </button>
+                  ${netInDisplay}
+                </div>
+                ${ipv6Placeholder}
+              </div>
+            `;
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = ipContainerHTML.trim();
+            const newContainer = tempDiv.firstElementChild;
+            if (newContainer) {
+              // Replace invisible placeholder if it exists
+              const placeholder = nameAndIpContainer.querySelector('.invisible');
+              if (placeholder) {
+                nameAndIpContainer.replaceChild(newContainer, placeholder);
+              } else {
+                nameAndIpContainer.appendChild(newContainer);
+              }
+              setupSystemEventHandlers(itemElement);
+            }
+          }
+        }
+      } else {
+        // IP removed - delete row
+        if (ipv4Row) {
+          ipv4Row.remove();
+        }
+        // If no IPs left, remove the container
+        if (ipContainer && !item.ipv6 && ipContainer.children.length === 0) {
+          ipContainer.remove();
+        }
+      }
+    }
+    
+    // Update IPv6 - handle creation/deletion of IP rows
+    if (oldItemNormalized.ipv6 !== newItemNormalized.ipv6) {
+      // Find IP container (could be visible or invisible placeholder)
+      // Try to find any container with these classes, including invisible ones
+      // Reuse nameAndIpContainer from IPv4 update if available, otherwise find it
+      // This was already set above, but if we're in a separate code path, find it again
+      const nameAndIpContainerForIPv6 = itemElement.querySelector('.flex.items-center.gap-4');
+      if (!nameAndIpContainerForIPv6) {
+        return; // Can't update without container
+      }
+      let ipContainer = nameAndIpContainerForIPv6.querySelector('.ip-info-container');
+      // Also check for invisible placeholder
+      if (!ipContainer) {
+        ipContainer = nameAndIpContainerForIPv6.querySelector('.invisible');
+      }
+      const ipv6Row = itemElement.querySelector('.system-ipv6')?.closest('.flex.items-center');
+      
+      if (item.ipv6) {
+        // IP exists - update or create row
+        if (ipv6Row) {
+          // Update existing row
+          const ipv6Span = ipv6Row.querySelector('.system-ipv6');
+          if (ipv6Span) {
+            ipv6Span.textContent = item.ipv6;
+          }
+          const ipv6CopyBtn = ipv6Row.querySelector('[data-ip]');
+          if (ipv6CopyBtn) {
+            ipv6CopyBtn.dataset.ip = item.ipv6;
+            ipv6CopyBtn.title = 'Copy IPv6';
+          }
+          // Update total net out traffic
+          let netOutSpan = ipv6Row.querySelector('.system-total-net-out');
+          if (item.total_net_out_bytes && item.total_net_out_bytes > 0) {
+            const formattedOut = typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B';
+            if (netOutSpan) {
+              netOutSpan.textContent = `Out: ${formattedOut}`;
+            } else {
+              netOutSpan = document.createElement('span');
+              // Add spacer if not exists
+              let spacer = ipv6Row.querySelector('.flex-1');
+              if (!spacer) {
+                spacer = document.createElement('span');
+                spacer.className = 'flex-1';
+                ipv6Row.appendChild(spacer);
+              }
+              netOutSpan.className = 'system-total-net-out text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left';
+              netOutSpan.textContent = `Out: ${formattedOut}`;
+              ipv6Row.appendChild(netOutSpan);
+            }
+          } else if (netOutSpan) {
+            netOutSpan.remove();
+          }
+        } else {
+          // Need to create IPv6 row
+          if (ipContainer) {
+            // Container exists (might be invisible placeholder)
+            // Remove invisible class if present
+            ipContainer.classList.remove('invisible');
+            // Clear placeholder content - find any child div that looks like placeholder
+            // The placeholder has class "min-h-[16px]" and contains "-"
+            const placeholder = Array.from(ipContainer.children).find(child => {
+              const hasMinHeight = child.classList.toString().includes('min-h') || 
+                                   child.style.minHeight || 
+                                   getComputedStyle(child).minHeight !== '0px';
+              const hasDash = child.textContent && child.textContent.trim() === '-';
+              return hasMinHeight && hasDash;
+            });
+            if (placeholder) {
+              placeholder.remove();
+            }
+            
+            // Create new IPv6 row (append at end)
+            const netOutDisplay = (item.total_net_out_bytes && item.total_net_out_bytes > 0) ? `<span class="flex-1"></span><span class="system-total-net-out text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>` : '<span class="flex-1"></span><span class="min-w-[80px]"></span>';
+            const ipv6RowHTML = `
+              <div class="flex items-center gap-1.5 min-h-[16px]">
+                <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] shrink-0">IPv6:</span>
+                <span class="system-ipv6 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${item.ipv6}</span>
+                <button class="copy-ip-btn shrink-0 rounded p-1 text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] transition-colors" data-ip="${item.ipv6}" title="Copy IPv6">
+                  <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                  </svg>
+                  <svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+                    <path d="M20 6L9 17l-5-5"/>
+                  </svg>
+                </button>
+                ${netOutDisplay}
+              </div>
+            `;
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = ipv6RowHTML.trim();
+            const newRow = tempDiv.firstElementChild;
+            if (newRow && ipContainer) {
+              ipContainer.appendChild(newRow);
+            }
+          } else if (nameAndIpContainerForIPv6) {
+            // No container exists, need to create it
+            const netOutDisplayForIPv6 = (item.total_net_out_bytes && item.total_net_out_bytes > 0) ? `<span class="flex-1"></span><span class="system-total-net-out text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>` : '<span class="flex-1"></span><span class="min-w-[80px]"></span>';
+            const ipContainerHTML = `
+              <div class="ip-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[28px] justify-center flex-shrink-0">
+                <div class="flex items-center gap-1.5 min-h-[16px]">
+                  <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv6:</span>
+                  <span class="system-ipv6 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${item.ipv6}</span>
+                  <button class="copy-ip-btn shrink-0 rounded p-1 text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] transition-colors" data-ip="${item.ipv6}" title="Copy IPv6">
+                    <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                    </svg>
+                    <svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+                      <path d="M20 6L9 17l-5-5"/>
+                    </svg>
+                  </button>
+                  ${netOutDisplayForIPv6}
+                </div>
+              </div>
+            `;
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = ipContainerHTML.trim();
+            const newContainer = tempDiv.firstElementChild;
+            if (newContainer) {
+              // Replace invisible placeholder if it exists
+              const placeholder = nameAndIpContainerForIPv6.querySelector('.invisible');
+              if (placeholder) {
+                nameAndIpContainerForIPv6.replaceChild(newContainer, placeholder);
+              } else {
+                nameAndIpContainerForIPv6.appendChild(newContainer);
+              }
+              setupSystemEventHandlers(itemElement);
+            }
+          }
+        }
+      } else {
+        // IPv6 removed - check if we need to create placeholder row
+        // Ensure ipContainer is available
+        if (!ipContainer) {
+          const nameAndIpContainerForIPv6 = itemElement.querySelector('.flex.items-center.gap-4');
+          if (nameAndIpContainerForIPv6) {
+            ipContainer = nameAndIpContainerForIPv6.querySelector('.ip-info-container');
+            // Also check for invisible placeholder
+            if (!ipContainer) {
+              ipContainer = nameAndIpContainerForIPv6.querySelector('.invisible');
+            }
+          }
+        }
+        
+        if (ipv6Row) {
+          // Check if we have IPv4 and need placeholder
+          if (item.ipv4 && !item.ipv6) {
+            // Replace IPv6 row with placeholder
+            const placeholderHTML = `
+              <div class="flex items-center gap-1.5 min-h-[16px]">
+                <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv6:</span>
+                <span class="text-[#737373] dark:text-[#737373] text-[#404040]">-</span>
+                <span class="flex-1"></span>
+                ${(item.total_net_out_bytes && item.total_net_out_bytes > 0) ? `<span class="system-total-net-out text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>` : '<span class="min-w-[80px]"></span>'}
+              </div>
+            `;
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = placeholderHTML.trim();
+            const placeholderRow = tempDiv.firstElementChild;
+            if (placeholderRow && ipContainer) {
+              ipv6Row.replaceWith(placeholderRow);
+            }
+          } else {
+            ipv6Row.remove();
+          }
+        } else if (item.ipv4 && !item.ipv6 && ipContainer) {
+          // No IPv6 row exists, but we need placeholder (check if IPv4 row exists)
+          const ipv4RowExists = ipContainer.querySelector('.system-ipv4');
+          if (ipv4RowExists) {
+            const placeholderHTML = `
+              <div class="flex items-center gap-1.5 min-h-[16px]">
+                <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv6:</span>
+                <span class="text-[#737373] dark:text-[#737373] text-[#404040]">-</span>
+                <span class="flex-1"></span>
+                ${(item.total_net_out_bytes && item.total_net_out_bytes > 0) ? `<span class="system-total-net-out text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>` : '<span class="min-w-[80px]"></span>'}
+              </div>
+            `;
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = placeholderHTML.trim();
+            const placeholderRow = tempDiv.firstElementChild;
+            if (placeholderRow && ipContainer) {
+              ipContainer.appendChild(placeholderRow);
+            }
+          }
+        }
+        // If no IPs left, remove the container
+        if (ipContainer && !item.ipv4 && !item.ipv6 && ipContainer.children.length === 0) {
+          ipContainer.remove();
+        }
+      }
+    }
+    
+    // Update total network traffic on IPv4 row (separate from IP update)
+    // This handles cases where traffic stats change but IP address hasn't changed
+    // Also handles cases where IP container needs to be created for traffic stats
+    if (oldItemNormalized.total_net_in_bytes !== newItemNormalized.total_net_in_bytes) {
+      const nameAndIpContainerForTraffic = itemElement.querySelector('.flex.items-center.gap-4');
+      if (!nameAndIpContainerForTraffic) {
+        return; // Can't update without container
+      }
+      let ipContainerForTraffic = nameAndIpContainerForTraffic.querySelector('.ip-info-container');
+      // Also check for invisible placeholder
+      if (!ipContainerForTraffic) {
+        ipContainerForTraffic = nameAndIpContainerForTraffic.querySelector('.invisible');
+      }
+      let ipv4Row = itemElement.querySelector('.system-ipv4')?.closest('.flex.items-center');
+      
+      // If IPv4 row doesn't exist but we have traffic data and IP address, create the container
+      if (!ipv4Row && item.ipv4 && item.total_net_in_bytes && item.total_net_in_bytes > 0) {
+        // IP container should exist if IPv4 is present, but let's make sure
+        if (!ipContainerForTraffic && nameAndIpContainerForTraffic) {
+          // Create IP container with IPv4 row and traffic stats
+          const netInDisplay = `<span class="flex-1"></span><span class="system-total-net-in text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left">In: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B'}</span>`;
+          const ipv4RowHTML = `
+            <div class="flex items-center gap-1.5 min-h-[16px]">
+              <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] shrink-0">IPv4:</span>
+              <span class="system-ipv4 text-[#262626] dark:text-[#d4d4d4] font-mono text-xs">${item.ipv4}</span>
+              <button class="copy-ip-btn shrink-0 rounded p-1 text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#262626] dark:hover:text-[#d4d4d4] hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] transition-colors" data-ip="${item.ipv4}" title="Copy IPv4">
+                <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                </svg>
+                <svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+                  <path d="M20 6L9 17l-5-5"/>
+                </svg>
+              </button>
+              ${netInDisplay}
+            </div>
+          `;
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = `<div class="ip-info-container hidden sm:flex flex-col gap-1 text-xs min-h-[28px] justify-center flex-shrink-0">${ipv4RowHTML}</div>`.trim();
+          const newContainer = tempDiv.firstElementChild;
+          if (newContainer && nameAndIpContainerForTraffic) {
+            const placeholder = nameAndIpContainerForTraffic.querySelector('.invisible');
+            if (placeholder) {
+              nameAndIpContainerForTraffic.replaceChild(newContainer, placeholder);
+            } else {
+              nameAndIpContainerForTraffic.appendChild(newContainer);
+            }
+            ipContainerForTraffic = newContainer;
+            ipv4Row = newContainer.querySelector('.system-ipv4')?.closest('.flex.items-center');
+            setupSystemEventHandlers(itemElement);
+          }
+        }
+      }
+      
+      if (ipv4Row) {
+        let netInSpan = ipv4Row.querySelector('.system-total-net-in');
+        if (item.total_net_in_bytes && item.total_net_in_bytes > 0) {
+          const formattedIn = typeof formatBytes === 'function' ? formatBytes(item.total_net_in_bytes) : '0 B';
+          if (netInSpan) {
+            netInSpan.textContent = `In: ${formattedIn}`;
+          } else {
+            netInSpan = document.createElement('span');
+            // Add spacer if not exists
+            let spacer = ipv4Row.querySelector('.flex-1');
+            if (!spacer) {
+              spacer = document.createElement('span');
+              spacer.className = 'flex-1';
+              ipv4Row.appendChild(spacer);
+            }
+            netInSpan.className = 'system-total-net-in text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left';
+            netInSpan.textContent = `In: ${formattedIn}`;
+            ipv4Row.appendChild(netInSpan);
+          }
+        } else if (netInSpan) {
+          netInSpan.remove();
+        }
+      }
+    }
+    
+    // Update total network traffic on IPv6 row or placeholder (separate from IP update)
+    // This handles cases where traffic stats change but IP address hasn't changed
+    // Also handles cases where IP container needs to be created for traffic stats
+    if (oldItemNormalized.total_net_out_bytes !== newItemNormalized.total_net_out_bytes) {
+      const nameAndIpContainerForTraffic = itemElement.querySelector('.flex.items-center.gap-4');
+      if (!nameAndIpContainerForTraffic) {
+        return; // Can't update without container
+      }
+      let ipContainer = nameAndIpContainerForTraffic.querySelector('.ip-info-container');
+      // Also check for invisible placeholder
+      if (!ipContainer) {
+        ipContainer = nameAndIpContainerForTraffic.querySelector('.invisible');
+      }
+      let ipv6Row = itemElement.querySelector('.system-ipv6')?.closest('.flex.items-center');
+      
+      // If IPv6 row doesn't exist but we have traffic data, try to find or create placeholder
+      if (!ipv6Row && item.total_net_out_bytes && item.total_net_out_bytes > 0) {
+        // If we have IPv6 address, container should have been created in IPv6 update block
+        if (item.ipv6 && !ipContainer && rightColForTraffic) {
+          // IPv6 exists but container doesn't - should have been created in IPv6 update block
+          // Just re-find it
+          ipContainer = rightColForTraffic.querySelector('.ip-info-container');
+          ipv6Row = itemElement.querySelector('.system-ipv6')?.closest('.flex.items-center');
+        } else if (item.ipv4 && !item.ipv6 && ipContainer) {
+          // We have IPv4 but no IPv6 - find or create IPv6 placeholder row
+          const allRows = Array.from(ipContainer.querySelectorAll('.flex.items-center'));
+          const ipv6PlaceholderRow = allRows.find(row => {
+            const spans = row.querySelectorAll('span');
+            let ipv6Label = false;
+            let hasDash = false;
+            for (const span of spans) {
+              const text = span.textContent?.trim();
+              if (text === 'IPv6:') {
+                ipv6Label = true;
+              }
+              if (text === '-') {
+                hasDash = true;
+              }
+            }
+            const noIpv6 = !row.querySelector('.system-ipv6');
+            return ipv6Label && hasDash && noIpv6;
+          });
+          if (ipv6PlaceholderRow) {
+            ipv6Row = ipv6PlaceholderRow;
+          } else {
+            // Create IPv6 placeholder row with traffic stats
+            const placeholderHTML = `
+              <div class="flex items-center gap-1.5 min-h-[16px]">
+                <span class="text-[#a3a3a3] dark:text-[#a3a3a3] text-[#404040] shrink-0">IPv6:</span>
+                <span class="text-[#737373] dark:text-[#737373] text-[#404040]">-</span>
+                <span class="flex-1"></span>
+                <span class="system-total-net-out text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left">Out: ${typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B'}</span>
+              </div>
+            `;
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = placeholderHTML.trim();
+            const placeholderRow = tempDiv.firstElementChild;
+            if (placeholderRow && ipContainer) {
+              ipContainer.appendChild(placeholderRow);
+              ipv6Row = placeholderRow;
+            }
+          }
+        }
+      }
+      
+      // Find IPv6 placeholder row (has "-" text and no system-ipv6 class) if not found yet
+      if (!ipv6Row && ipContainer) {
+        const allRows = Array.from(ipContainer.querySelectorAll('.flex.items-center'));
+        const ipv6PlaceholderRow = allRows.find(row => {
+          // Find IPv6 label by checking all spans in the row
+          const spans = row.querySelectorAll('span');
+          let ipv6Label = false;
+          let hasDash = false;
+          for (const span of spans) {
+            const text = span.textContent?.trim();
+            if (text === 'IPv6:') {
+              ipv6Label = true;
+            }
+            if (text === '-') {
+              hasDash = true;
+            }
+          }
+          const noIpv6 = !row.querySelector('.system-ipv6');
+          return ipv6Label && hasDash && noIpv6;
+        });
+        if (ipv6PlaceholderRow) {
+          ipv6Row = ipv6PlaceholderRow;
+        }
+      }
+      
+      const targetIpv6Row = ipv6Row;
+      
+      if (targetIpv6Row) {
+        let netOutSpan = targetIpv6Row.querySelector('.system-total-net-out');
+        if (item.total_net_out_bytes && item.total_net_out_bytes > 0) {
+          const formattedOut = typeof formatBytes === 'function' ? formatBytes(item.total_net_out_bytes) : '0 B';
+          if (netOutSpan) {
+            netOutSpan.textContent = `Out: ${formattedOut}`;
+          } else {
+            netOutSpan = document.createElement('span');
+            // Add spacer if not exists
+            let spacer = targetIpv6Row.querySelector('.flex-1');
+            if (!spacer) {
+              spacer = document.createElement('span');
+              spacer.className = 'flex-1';
+              targetIpv6Row.appendChild(spacer);
+            }
+            netOutSpan.className = 'system-total-net-out text-[#737373] dark:text-[#737373] text-[#404040] min-w-[80px] text-left';
+            netOutSpan.textContent = `Out: ${formattedOut}`;
+            targetIpv6Row.appendChild(netOutSpan);
+          }
+        } else if (netOutSpan) {
+          netOutSpan.remove();
+        }
+      }
+    }
+    
+    // Re-setup event handlers for newly created copy buttons
+    // setupSystemEventHandlers accepts both container and single element
+    if (oldItemNormalized.ipv4 !== newItemNormalized.ipv4 || oldItemNormalized.ipv6 !== newItemNormalized.ipv6) {
+      // Setup handlers for the item element (works because querySelectorAll works on any element)
+      setupSystemEventHandlers(itemElement);
+    }
+  }
+
+  // Smart render with incremental updates
+  async function renderSystems(data) {
+    const container = document.getElementById('systems-list');
+    if (!container) return;
+
+    if (!Array.isArray(data) || data.length === 0) {
+      container.innerHTML = `
+        <div class="flex items-center justify-center py-12 text-center">
+          <p class="text-sm text-[#737373]">No systems found</p>
+        </div>
+      `;
+      currentData.clear();
+      return;
+    }
+
+    // Create new data map with normalized items
+    const newData = new Map();
+    data.forEach(item => {
+      const normalized = normalizeItem(item);
+      normalized.original = item; // Keep original for rendering
+      newData.set(item.id, normalized);
+    });
+
+    // Initial render - if no existing data, render everything
+    if (currentData.size === 0) {
+      container.innerHTML = data.map((system, index) => renderSystemItem(system, index)).join('');
+      currentData = newData;
+      
+      // Add staggered entrance animation for initial load
+      const systemItems = container.querySelectorAll('.draggable-item');
+      systemItems.forEach((item, index) => {
+        item.style.opacity = '0';
+        item.classList.add('animate-stagger-in');
+        item.style.animationDelay = `${index * 60}ms`;
+        // Clean up after animation
+        setTimeout(() => {
+          item.style.opacity = '';
+          item.classList.remove('animate-stagger-in');
+          item.style.animationDelay = '';
+        }, 400 + index * 60);
+      });
+      
+      setupSystemEventHandlers(container);
+      setupDragAndDrop(container);
+      await loadCPUBrandIcons();
+      return;
+    }
+
+    // Get existing items
+    const existingItems = container.querySelectorAll('.draggable-item');
+    const existingItemMap = new Map();
+    existingItems.forEach(item => {
+      const id = item.dataset.systemId;
+      if (id) {
+        existingItemMap.set(id, item);
+      }
+    });
+
+    // Track which items need updates
+    let hasChanges = false;
+    const itemsToUpdate = [];
+    const itemsToAdd = [];
+    const itemsToRemove = [];
+
+    // Check for updates and new items
+    data.forEach((item, index) => {
+      const normalizedItem = newData.get(item.id);
+      const oldItem = currentData.get(item.id);
+      const existingItem = existingItemMap.get(item.id);
+
+      if (!existingItem) {
+        // New item needs to be added
+        itemsToAdd.push({ item, index });
+        hasChanges = true;
+      } else if (!oldItem) {
+        // Item exists in DOM but not in cache - treat as new item (re-render)
+        // This can happen when a new client connects and DOM was manually added
+        itemsToAdd.push({ item, index });
+        itemsToRemove.push(item.id); // Remove old DOM element
+        hasChanges = true;
+      } else if (hasChanged(oldItem, normalizedItem)) {
+        // Existing item needs update (both in DOM and cache)
+        itemsToUpdate.push({ itemElement: existingItem, item: item });
+        hasChanges = true;
+      } else if (oldItem && oldItem.order !== normalizedItem.order) {
+        // Order changed, need to reorder
+        hasChanges = true;
+      }
+    });
+
+    // Check for removed items
+    currentData.forEach((oldItem, id) => {
+      if (!newData.has(id)) {
+        itemsToRemove.push(id);
+        hasChanges = true;
+      }
+    });
+
+    // If no changes, skip update completely
+    if (!hasChanges && existingItems.length === data.length) {
+      // Update cache but don't touch DOM at all
+      currentData = newData;
+      return; // Silent skip - no DOM operations
+    }
+
+    // Remove deleted items (and items that need to be re-rendered)
+    itemsToRemove.forEach(id => {
+      const itemElement = existingItemMap.get(id);
+      if (itemElement) {
+        itemElement.remove();
+        // Also remove from existingItemMap to avoid conflicts
+        existingItemMap.delete(id);
+      }
+    });
+
+    // Update existing items (only changed fields)
+    if (itemsToUpdate.length > 0) {
+      itemsToUpdate.forEach(({ itemElement, item }) => {
+        // Double-check that item is still in cache before updating
+        if (currentData.has(item.id)) {
+          updateSystemItem(itemElement, item);
+        } else {
+          // Item was removed from cache, skip update (should be handled by re-render)
+        }
+      });
+    }
+
+    // Add new items
+    if (itemsToAdd.length > 0) {
+      itemsToAdd.forEach(({ item, index }, addIndex) => {
+        // Find insertion point
+        let insertBefore = null;
+        for (let i = index + 1; i < data.length; i++) {
+          const nextId = data[i].id;
+          const nextItem = container.querySelector(`[data-system-id="${nextId}"]`);
+          if (nextItem) {
+            insertBefore = nextItem;
+            break;
+          }
+        }
+
+        const itemHTML = renderSystemItem(item, index);
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = itemHTML;
+        const itemElement = tempDiv.firstElementChild;
+        if (itemElement) {
+          // Add entrance animation for new items
+          itemElement.classList.add('animate-scale-in');
+          itemElement.style.animationDelay = `${addIndex * 50}ms`;
+          
+          if (insertBefore) {
+            container.insertBefore(itemElement, insertBefore);
+          } else {
+            container.appendChild(itemElement);
+          }
+          
+          // Clean up animation class after animation completes
+          setTimeout(() => {
+            itemElement.classList.remove('animate-scale-in');
+            itemElement.style.animationDelay = '';
+          }, 300 + addIndex * 50);
+        }
+      });
+
+      // Setup event handlers for new items
+      setupSystemEventHandlers(container);
+      setupDragAndDrop(container);
+      await loadCPUBrandIcons();
+    }
+
+    // Handle reordering if needed (only if order actually changed)
+    if (hasChanges) {
+      const currentOrder = Array.from(container.children).map(item => item.dataset.systemId).filter(Boolean);
+      const desiredOrder = data.map(item => item.id);
+
+      if (currentOrder.length === desiredOrder.length && 
+          JSON.stringify(currentOrder) !== JSON.stringify(desiredOrder)) {
+        // Reorder items without full re-render
+        const itemMap = new Map();
+        Array.from(container.children).forEach(item => {
+          const id = item.dataset.systemId;
+          if (id) {
+            itemMap.set(id, item);
+          }
+        });
+
+        // Re-append in correct order and update data-index
+        data.forEach((item, index) => {
+          const itemElement = itemMap.get(item.id);
+          if (itemElement && itemElement.parentNode) {
+            container.appendChild(itemElement); // appendChild moves existing element
+            // Update data-index to reflect new position
+            itemElement.dataset.index = index.toString();
+          }
+        });
+      }
+    }
+
+    // Always update cache (even if no DOM changes)
+    currentData = newData;
+  }
+
+  // Setup event handlers for system items (copy buttons, edit, delete)
+  function setupSystemEventHandlers(container) {
+    // Copy to clipboard helper function with fallback
+    async function copyToClipboard(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch (err) {
+          // Clipboard API failed, trying fallback
+        }
+      }
+      
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        
+        if (successful) {
+          return true;
+        } else {
+          throw new Error('execCommand copy failed');
+        }
+      } catch (err) {
+        return false;
+      }
+    }
+
+      // Setup copy IP buttons
+    container.querySelectorAll('.copy-ip-btn').forEach(btn => {
+      // Remove existing listeners by cloning
+      const newBtn = btn.cloneNode(true);
+      btn.parentNode.replaceChild(newBtn, btn);
+      
+      newBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+        const ip = newBtn.dataset.ip;
+        if (!ip) return;
+        
+        const copyIcon = newBtn.querySelector('.copy-icon');
+        const checkIcon = newBtn.querySelector('.check-icon');
+        const originalTitle = newBtn.title;
+        
+        const success = await copyToClipboard(ip);
+        
+        if (success) {
+            if (copyIcon && checkIcon) {
+              copyIcon.style.display = 'none';
+              checkIcon.style.display = 'block';
+            newBtn.title = 'Copied!';
+              setTimeout(() => {
+                copyIcon.style.display = 'block';
+                checkIcon.style.display = 'none';
+              newBtn.title = originalTitle;
+              }, 1000);
+            }
+        } else {
+          newBtn.title = 'Copy failed';
+          setTimeout(() => {
+            newBtn.title = originalTitle;
+          }, 2000);
+          }
+        });
+      });
+
+      // Setup edit buttons
+    container.querySelectorAll('.edit-btn').forEach(btn => {
+      // Remove existing listeners by cloning
+      const newBtn = btn.cloneNode(true);
+      btn.parentNode.replaceChild(newBtn, btn);
+      
+      newBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+        const system = JSON.parse(newBtn.dataset.system);
+          openEditModal(system);
+        });
+      });
+
+      // Setup delete buttons
+    container.querySelectorAll('.delete-btn').forEach(btn => {
+      // Remove existing listeners by cloning
+      const newBtn = btn.cloneNode(true);
+      btn.parentNode.replaceChild(newBtn, btn);
+      
+      newBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+        const systemId = newBtn.dataset.systemId;
+        const systemName = newBtn.dataset.systemName;
+          openDeleteModal(systemId, systemName);
+        });
+      });
+
+      // Setup copy Linux command buttons
+    container.querySelectorAll('.copy-linux-cmd-btn').forEach(btn => {
+      const newBtn = btn.cloneNode(true);
+      btn.parentNode.replaceChild(newBtn, btn);
+      
+      newBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const systemId = newBtn.dataset.systemId;
+        const serverUrl = window.location.origin;
+        const command = `curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh | sudo bash -s -- --id ${systemId} --server ${serverUrl}`;
+        
+        const linuxIcon = newBtn.querySelector('.linux-icon');
+        const checkIcon = newBtn.querySelector('.check-icon');
+        const originalTitle = newBtn.title;
+        
+        const success = await copyToClipboard(command);
+        
+        if (success) {
+          if (linuxIcon && checkIcon) {
+            linuxIcon.style.display = 'none';
+            checkIcon.style.display = 'block';
+            newBtn.classList.add('text-green-400');
+            newBtn.title = 'Copied!';
+            setTimeout(() => {
+              linuxIcon.style.display = 'block';
+              checkIcon.style.display = 'none';
+              newBtn.classList.remove('text-green-400');
+              newBtn.title = originalTitle;
+            }, 1500);
+          }
+        } else {
+          newBtn.title = 'Copy failed';
+          setTimeout(() => {
+            newBtn.title = originalTitle;
+          }, 2000);
+        }
+      });
+    });
+
+    // Setup copy Windows command buttons
+    container.querySelectorAll('.copy-windows-cmd-btn').forEach(btn => {
+      const newBtn = btn.cloneNode(true);
+      btn.parentNode.replaceChild(newBtn, btn);
+      
+      newBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const systemId = newBtn.dataset.systemId;
+        const serverUrl = window.location.origin;
+        // Use backtick to escape $env: so PowerShell doesn't expand it prematurely
+        const command = `powershell -ExecutionPolicy Bypass -Command "& { \`$env:AgentId='${systemId}'; \`$env:ServerBase='${serverUrl}'; irm https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.ps1 | iex }"`;
+        
+        const windowsIcon = newBtn.querySelector('.windows-icon');
+        const checkIcon = newBtn.querySelector('.check-icon');
+        const originalTitle = newBtn.title;
+        
+        const success = await copyToClipboard(command);
+        
+        if (success) {
+          if (windowsIcon && checkIcon) {
+            windowsIcon.style.display = 'none';
+            checkIcon.style.display = 'block';
+            newBtn.classList.add('text-green-400');
+            newBtn.title = 'Copied!';
+            setTimeout(() => {
+              windowsIcon.style.display = 'block';
+              checkIcon.style.display = 'none';
+              newBtn.classList.remove('text-green-400');
+              newBtn.title = originalTitle;
+            }, 1500);
+          }
+        } else {
+          newBtn.title = 'Copy failed';
+          setTimeout(() => {
+            newBtn.title = originalTitle;
+          }, 2000);
+        }
+      });
+    });
+  }
+
+  // Load systems list
+  async function loadSystems() {
+    const container = document.getElementById('systems-list');
+    if (!container) return;
+
+    try {
+      // Get auth token for authenticated requests (to show IP addresses)
+      const token = localStorage.getItem('admin_auth_token');
+      const headers = {
+        'Content-Type': 'application/json',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      
+      const res = await fetch(`${apiBase}/api/metrics?t=${Date.now()}`, {
+        headers: headers
+      });
+      const data = await res.json();
+
+      // Backend already returns data sorted by order field
+      await renderSystems(data);
+    } catch (err) {
+      container.innerHTML = `
+        <div class="text-center py-12">
+          <p class="text-sm text-red-400">Failed to load systems</p>
+        </div>
+      `;
+    }
+  }
+
+  // Save order to backend
+  async function saveOrderToBackend(order) {
+    try {
+      const response = await fetch(`${apiBase}/api/metrics/order`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ order }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      // Reload systems to update all data-index attributes
+      // This is crucial for subsequent drag operations
+      await loadSystems();
+    } catch (error) {
+      showMessage('Failed to save order: ' + error.message, 'error');
+    }
+  }
+
+  // Show temporary message
+  function showMessage(text, type = 'info') {
+    const container = document.getElementById('systems-container');
+    if (!container) return;
+
+    const messageEl = document.createElement('div');
+    messageEl.className = `fixed top-4 right-4 px-4 py-2 rounded-lg text-sm font-medium shadow-lg z-50 ${
+      type === 'success' ? 'bg-green-500 text-white' : 
+      type === 'error' ? 'bg-red-500 text-white' : 
+      'bg-blue-500 text-white'
+    }`;
+    messageEl.textContent = text;
+    document.body.appendChild(messageEl);
+
+    setTimeout(() => {
+      messageEl.remove();
+    }, 3000);
+  }
+
+  // Auto-scroll during drag
+  let lastMouseY = 0;
+  let lastMouseX = 0;
+  let containerCache = null; // Cache container rect to reduce recalculations
+  
+  function startAutoScroll(e, container) {
+    lastMouseY = e.clientY;
+    lastMouseX = e.clientX;
+    containerCache = null; // Reset cache
+    
+    if (autoScrollInterval) return; // Already scrolling
+    
+    const scrollThreshold = 100; // pixels from edge
+    const maxScrollSpeed = 20; // pixels per frame
+    const minScrollSpeed = 2; // minimum scroll speed
+    const fastScrollThreshold = 50; // pixels for fast scroll
+    const fastScrollMultiplier = 1.8; // multiplier for fast scroll
+    
+    autoScrollInterval = setInterval(() => {
+      if (!draggedElement) {
+        stopAutoScroll();
+        return;
+      }
+      
+      const mouseY = lastMouseY;
+      const mouseX = lastMouseX;
+      
+      // Cache container rect (only recalculate if needed)
+      if (!containerCache) {
+        containerCache = container.getBoundingClientRect();
+      }
+      const containerTop = containerCache.top;
+      const containerBottom = containerCache.bottom;
+      const containerLeft = containerCache.left;
+      const containerRight = containerCache.right;
+      
+      // Get container scroll info
+      const containerScrollTop = container.scrollTop || 0;
+      const containerScrollHeight = container.scrollHeight || 0;
+      const containerClientHeight = container.clientHeight || 0;
+      const containerCanScrollUp = containerScrollTop > 0;
+      const containerCanScrollDown = containerScrollTop < (containerScrollHeight - containerClientHeight - 1);
+      
+      // Get window scroll info
+      const windowScrollTop = window.pageYOffset || document.documentElement.scrollTop;
+      const windowScrollHeight = document.documentElement.scrollHeight;
+      const windowClientHeight = window.innerHeight;
+      const windowCanScrollUp = windowScrollTop > 0;
+      const windowCanScrollDown = windowScrollTop < (windowScrollHeight - windowClientHeight - 1);
+      
+      // Check if mouse is within container bounds (for optimization)
+      const isInContainer = mouseX >= containerLeft && mouseX <= containerRight &&
+                            mouseY >= containerTop && mouseY <= containerBottom;
+      
+      // Calculate scroll amount
+      let scrollAmount = 0;
+      let shouldScrollContainer = false;
+      let shouldScrollWindow = false;
+      
+      // Priority 1: Check container edges (if mouse is in container or near it)
+      if (isInContainer || (mouseY >= containerTop - scrollThreshold && mouseY <= containerBottom + scrollThreshold)) {
+        // Near top edge of container
+        if (mouseY < containerTop + scrollThreshold) {
+          const distance = Math.max(0, mouseY - containerTop);
+          const speed = Math.max(minScrollSpeed, (scrollThreshold - distance) / 5);
+          scrollAmount = -Math.min(maxScrollSpeed, speed);
+          
+          // Accelerate when very close
+          if (mouseY < containerTop + fastScrollThreshold) {
+            scrollAmount *= fastScrollMultiplier;
+          }
+          
+          // Determine scroll target
+          if (containerCanScrollUp) {
+            shouldScrollContainer = true;
+          } else if (windowCanScrollUp) {
+            shouldScrollWindow = true;
+          }
+        }
+        // Near bottom edge of container
+        else if (mouseY > containerBottom - scrollThreshold) {
+          const distance = Math.max(0, containerBottom - mouseY);
+          const speed = Math.max(minScrollSpeed, (scrollThreshold - distance) / 5);
+          scrollAmount = Math.min(maxScrollSpeed, speed);
+          
+          // Determine scroll target
+          if (containerCanScrollDown) {
+            shouldScrollContainer = true;
+          } else if (windowCanScrollDown) {
+            shouldScrollWindow = true;
+          }
+        }
+      }
+      
+      // Priority 2: Check viewport edges (for window-level scrolling)
+      if (scrollAmount === 0) {
+        // Near top of viewport
+        if (mouseY < scrollThreshold && windowCanScrollUp) {
+          const distance = Math.max(0, mouseY);
+          const speed = Math.max(minScrollSpeed, (scrollThreshold - distance) / 5);
+          scrollAmount = -Math.min(maxScrollSpeed, speed);
+          shouldScrollWindow = true;
+          
+          // Accelerate when very close to top
+          if (mouseY < fastScrollThreshold) {
+            scrollAmount *= fastScrollMultiplier;
+          }
+        }
+        // Near bottom of viewport
+        else if (mouseY > windowClientHeight - scrollThreshold && windowCanScrollDown) {
+          const distance = Math.max(0, windowClientHeight - mouseY);
+          const speed = Math.max(minScrollSpeed, (scrollThreshold - distance) / 5);
+          scrollAmount = Math.min(maxScrollSpeed, speed);
+          shouldScrollWindow = true;
+        }
+      }
+      
+      // Apply scroll
+      if (scrollAmount !== 0) {
+        if (shouldScrollContainer && container) {
+          container.scrollBy({ top: scrollAmount, behavior: 'auto' });
+          // Invalidate cache after scroll
+          containerCache = null;
+        }
+        if (shouldScrollWindow) {
+          window.scrollBy({ top: scrollAmount, behavior: 'auto' });
+        }
+      }
+    }, 16); // ~60fps
+  }
+  
+  function stopAutoScroll() {
+    if (autoScrollInterval) {
+      clearInterval(autoScrollInterval);
+      autoScrollInterval = null;
+    }
+    containerCache = null; // Clear cache
+  }
+  
+  function updateAutoScrollMouseY(e) {
+    lastMouseY = e.clientY;
+    lastMouseX = e.clientX;
+    // Invalidate cache when mouse moves significantly
+    if (containerCache) {
+      const deltaY = Math.abs(e.clientY - (containerCache.top + containerCache.bottom) / 2);
+      if (deltaY > 50) {
+        containerCache = null;
+      }
+    }
+  }
+
+  // Drag and drop functionality
+  function setupDragAndDrop(container) {
+    if (!container) return;
+
+    const items = container.querySelectorAll('.draggable-item');
+    
+    items.forEach(item => {
+      // Prevent dragging when clicking on interactive elements
+      const interactiveElements = item.querySelectorAll('button, input, a');
+      interactiveElements.forEach(el => {
+        el.addEventListener('mousedown', (e) => {
+          e.stopPropagation();
+        });
+        el.addEventListener('dragstart', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+        });
+      });
+
+      // Add drag handle indicator
+      item.style.cursor = 'move';
+      item.setAttribute('title', 'Drag to reorder');
+
+      item.addEventListener('dragstart', (e) => {
+        // Don't start drag if clicking on interactive elements
+        if (e.target.closest('button, input, a')) {
+          e.preventDefault();
+          return;
+        }
+        draggedElement = item;
+        // Get actual DOM index instead of data-index (which may be stale)
+        const allItems = Array.from(container.querySelectorAll('.draggable-item'));
+        draggedIndex = allItems.findIndex(i => i === item);
+        if (draggedIndex === -1) {
+          // Fallback to data-index if not found
+          draggedIndex = parseInt(item.dataset.index) || 0;
+        }
+        item.classList.add('opacity-50');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/html', item.outerHTML);
+        
+        // Start auto-scroll monitoring
+        // We'll start it on dragover to get mouse position
+      });
+
+      item.addEventListener('dragend', () => {
+        // Stop auto-scroll
+        stopAutoScroll();
+        
+        if (draggedElement) {
+          draggedElement.classList.remove('opacity-50');
+        }
+        draggedElement = null;
+        draggedIndex = null;
+        // Remove all drag-over classes
+        items.forEach(i => i.classList.remove('border-blue-400', 'bg-blue-500/10', 'border-t-2', 'border-b-2'));
+      });
+
+      item.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        
+        // Update mouse position and start auto-scroll if needed
+        if (draggedElement) {
+          updateAutoScrollMouseY(e);
+          if (!autoScrollInterval) {
+            startAutoScroll(e, container);
+          }
+        }
+        
+        if (draggedElement && draggedElement !== item) {
+          const currentIndex = parseInt(item.dataset.index);
+          const rect = item.getBoundingClientRect();
+          const midpoint = rect.top + rect.height / 2;
+          
+          // Remove all drag-over classes
+          items.forEach(i => i.classList.remove('border-blue-400', 'bg-blue-500/10', 'border-t-2', 'border-b-2'));
+          
+          if (e.clientY < midpoint) {
+            // Insert above
+            item.classList.add('border-t-2', 'border-blue-400');
+          } else {
+            // Insert below
+            item.classList.add('border-b-2', 'border-blue-400');
+          }
+        }
+      });
+
+      item.addEventListener('dragleave', (e) => {
+        item.classList.remove('border-blue-400', 'bg-blue-500/10', 'border-t-2', 'border-b-2');
+        
+        // Update mouse position for auto-scroll
+        if (draggedElement) {
+          updateAutoScrollMouseY(e);
+        }
+      });
+
+      item.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        if (!draggedElement || draggedElement === item) return;
+
+        // Get all items in current DOM order (not from data-index, but actual DOM position)
+        const allItems = Array.from(container.querySelectorAll('.draggable-item'));
+        
+        // Find actual indices in DOM
+        const draggedId = draggedElement.dataset.systemId;
+        const dropId = item.dataset.systemId;
+        
+        const draggedDomIndex = allItems.findIndex(i => i.dataset.systemId === draggedId);
+        const dropDomIndex = allItems.findIndex(i => i.dataset.systemId === dropId);
+        
+        if (draggedDomIndex === -1 || dropDomIndex === -1) {
+          return;
+        }
+
+        const rect = item.getBoundingClientRect();
+        const midpoint = rect.top + rect.height / 2;
+        const insertAbove = e.clientY < midpoint;
+
+        // Get all system IDs in current DOM order
+        const currentOrder = allItems.map(i => i.dataset.systemId);
+
+        // Remove dragged item from current order
+        const newOrder = currentOrder.filter(id => id !== draggedId);
+
+        // Calculate final insert position based on actual DOM indices
+        let finalInsertIndex;
+        
+        if (draggedDomIndex < dropDomIndex) {
+          // Dragging downward
+          // After removal, target position shifts left by 1
+          finalInsertIndex = insertAbove ? dropDomIndex - 1 : dropDomIndex;
+        } else if (draggedDomIndex > dropDomIndex) {
+          // Dragging upward
+          // Target position stays the same after removal
+          finalInsertIndex = insertAbove ? dropDomIndex : dropDomIndex + 1;
+        } else {
+          // Same position, no change needed
+          return;
+        }
+
+        // Ensure index is within bounds
+        finalInsertIndex = Math.max(0, Math.min(finalInsertIndex, newOrder.length));
+        newOrder.splice(finalInsertIndex, 0, draggedId);
+
+
+        // Save new order to backend (this will also reload after save)
+        saveOrderToBackend(newOrder);
+      });
+    });
+    
+    // Add global dragover listener on container for auto-scroll
+    // This ensures scrolling works even when mouse is between items
+    container.addEventListener('dragover', (e) => {
+      if (draggedElement) {
+        updateAutoScrollMouseY(e);
+        if (!autoScrollInterval) {
+          startAutoScroll(e, container);
+        }
+      }
+    });
+    
+    // Also listen on document for when dragging outside container
+    document.addEventListener('dragover', (e) => {
+      if (draggedElement) {
+        updateAutoScrollMouseY(e);
+        if (!autoScrollInterval) {
+          startAutoScroll(e, container);
+        }
+      }
+    });
+  }
+
+  // Add system
+  const addForm = document.getElementById('add-system-form');
+  if (addForm) {
+    addForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const formData = new FormData(addForm);
+      const messageEl = document.getElementById('add-form-message');
+
+      const systemName = formData.get('name')?.trim();
+      if (!systemName) {
+        if (messageEl) {
+          messageEl.className = 'text-sm text-red-400';
+          messageEl.textContent = '❌ Service Name is required';
+          messageEl.classList.remove('hidden');
+        }
+        return;
+      }
+
+      // Get existing systems to generate unique numeric ID
+      let existingIds = [];
+      try {
+        const existingRes = await fetch(`${apiBase}/api/metrics`);
+        const existingData = await existingRes.json();
+        if (Array.isArray(existingData)) {
+          existingIds = existingData.map(s => {
+            // Extract numeric part from ID (handle both "123" and "server-123" formats)
+            const match = s.id.toString().match(/\d+/);
+            return match ? parseInt(match[0]) : 0;
+          });
+        }
+      } catch (err) {
+        // Could not fetch existing systems
+      }
+
+      // Generate unique numeric ID
+      let systemId = 1;
+      if (existingIds.length > 0) {
+        const maxId = Math.max(...existingIds);
+        systemId = maxId + 1;
+      }
+
+      const data = {
+        id: systemId.toString(),
+        name: systemName,
+        cpu: 0,
+        memory: 0,
+        disk: 0,
+        net_in_mb_s: 0,
+        net_out_mb_s: 0,
+        agent_version: '1.0.0',
+        alert: false,
+      };
+
+      try {
+        const res = await fetch(`${apiBase}/api/metrics`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+
+        if (res.ok) {
+          addForm.reset();
+          closeAddModal();
+          await loadSystems();
+        } else {
+          const errorText = await res.text();
+          throw new Error(errorText || `HTTP ${res.status}`);
+        }
+      } catch (err) {
+        if (messageEl) {
+          messageEl.className = 'text-sm text-red-400';
+          messageEl.textContent = '❌ Failed to add system: ' + err.message;
+          messageEl.classList.remove('hidden');
+        }
+      }
+    });
+  }
+
+  // Edit system
+  const editForm = document.getElementById('edit-system-form');
+  if (editForm) {
+    editForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const formData = new FormData(editForm);
+      const submitBtn = editForm.querySelector('button[type="submit"]');
+      
+      // Use original-id from hidden field
+      const systemId = formData.get('original-id');
+      const systemName = formData.get('name')?.trim();
+
+
+      // Validate
+      if (!systemId || !systemName || systemId.trim() === '' || systemName.trim() === '') {
+        alert('Service Name is required');
+        return;
+      }
+
+      // Disable submit button during request
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Updating...';
+      }
+
+      const data = {
+        id: systemId.trim(),
+        name: systemName.trim(),
+        cpu: 0,
+        memory: 0,
+        disk: 0,
+        net_in_mb_s: 0,
+        net_out_mb_s: 0,
+        agent_version: '1.0.0',
+        alert: false,
+      };
+
+
+      try {
+        const res = await fetch(`${apiBase}/api/metrics`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+
+        if (res.ok) {
+          editForm.reset();
+          closeEditModal();
+          await loadSystems();
+        } else {
+          const errorText = await res.text();
+          throw new Error(errorText || `HTTP ${res.status}`);
+        }
+      } catch (err) {
+        alert('Failed to update system: ' + err.message);
+      } finally {
+        // Re-enable submit button
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Update System';
+        }
+      }
+    });
+  }
+
+  // Export data
+
+  // Refresh button
+  const refreshBtn = document.getElementById('refresh-btn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      // Prevent double-click
+      if (refreshBtn.disabled) return;
+      refreshBtn.disabled = true;
+      
+      // Add rotation animation to the icon (not the button)
+      const icon = refreshBtn.querySelector('svg');
+      if (icon) {
+        icon.classList.add('animate-spin-smooth');
+      }
+      
+      try {
+        await loadSystems();
+      } catch (err) {
+        // Refresh failed silently
+      } finally {
+        // Keep spinning for at least 500ms for visual feedback
+        setTimeout(() => {
+          refreshBtn.disabled = false;
+          if (icon) {
+            icon.classList.remove('animate-spin-smooth');
+          }
+        }, 500);
+      }
+    });
+  }
+
+  // Change Password Modal controls
+  const changePasswordModal = document.getElementById('change-password-modal');
+  const changePasswordBtn = document.getElementById('change-password-btn');
+  const closeChangePasswordBtn = document.getElementById('close-change-password-modal-btn');
+  const cancelChangePasswordBtn = document.getElementById('cancel-change-password-btn');
+  const changePasswordForm = document.getElementById('change-password-form');
+  const changePasswordFormMessage = document.getElementById('change-password-form-message');
+
+  // Helper to reset change password form
+  function resetChangePasswordForm() {
+    if (changePasswordForm) changePasswordForm.reset();
+    if (changePasswordFormMessage) {
+      changePasswordFormMessage.classList.add('hidden');
+      changePasswordFormMessage.textContent = '';
+    }
+  }
+
+  // Open change password modal
+  if (changePasswordBtn && changePasswordModal) {
+    changePasswordBtn.addEventListener('click', () => {
+      resetChangePasswordForm();
+      openModalWithAnimation(changePasswordModal);
+    });
+  }
+
+  // Close change password modal
+  if (closeChangePasswordBtn && changePasswordModal) {
+    closeChangePasswordBtn.addEventListener('click', () => {
+      closeModalWithAnimation(changePasswordModal, resetChangePasswordForm);
+    });
+  }
+
+  // Cancel change password
+  if (cancelChangePasswordBtn && changePasswordModal) {
+    cancelChangePasswordBtn.addEventListener('click', () => {
+      closeModalWithAnimation(changePasswordModal, resetChangePasswordForm);
+    });
+  }
+
+  // Change password form submission
+  if (changePasswordForm) {
+    changePasswordForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const formData = new FormData(changePasswordForm);
+      const currentPassword = formData.get('currentPassword');
+      const newPassword = formData.get('newPassword');
+      const confirmNewPassword = formData.get('confirmNewPassword');
+
+      // Clear previous messages
+      changePasswordFormMessage.classList.add('hidden');
+      changePasswordFormMessage.textContent = '';
+
+      // Validation
+      if (!currentPassword || !newPassword || !confirmNewPassword) {
+        changePasswordFormMessage.textContent = 'Please fill in all fields';
+        changePasswordFormMessage.classList.remove('hidden');
+        changePasswordFormMessage.classList.add('text-red-400');
+        return;
+      }
+
+      if (newPassword.length < 6) {
+        changePasswordFormMessage.textContent = 'New password must be at least 6 characters';
+        changePasswordFormMessage.classList.remove('hidden');
+        changePasswordFormMessage.classList.add('text-red-400');
+        return;
+      }
+
+      if (newPassword !== confirmNewPassword) {
+        changePasswordFormMessage.textContent = 'New passwords do not match';
+        changePasswordFormMessage.classList.remove('hidden');
+        changePasswordFormMessage.classList.add('text-red-400');
+        return;
+      }
+
+      // Disable submit button
+      const submitBtn = changePasswordForm.querySelector('button[type="submit"]');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Changing...';
+      }
+
+      try {
+        const token = localStorage.getItem('admin_auth_token');
+        if (!token) {
+          throw new Error('Not authenticated');
+        }
+
+        const response = await fetch(`${apiBase}/api/auth/change-password`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            currentPassword: currentPassword,
+            newPassword: newPassword
+          })
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || 'Failed to change password');
+        }
+
+        const result = await response.json();
+        if (result.success) {
+          // Close modal immediately on success
+          closeModalWithAnimation(changePasswordModal, resetChangePasswordForm);
+        } else {
+          throw new Error('Failed to change password');
+        }
+      } catch (err) {
+        changePasswordFormMessage.textContent = err.message || 'Failed to change password';
+        changePasswordFormMessage.classList.remove('hidden');
+        changePasswordFormMessage.classList.remove('text-emerald-400');
+        changePasswordFormMessage.classList.add('text-red-400');
+      } finally {
+        // Re-enable submit button
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = '<span data-translate="changePassword">Change Password</span>';
+          updateAdminTranslations();
+        }
+      }
+    });
+  }
+
+  // TCPing Config Modal controls
+  const tcpingConfigModal = document.getElementById('tcping-config-modal');
+  const tcpingConfigBtn = document.getElementById('tcping-config-btn');
+  const closeTCPingConfigBtn = document.getElementById('close-tcping-config-modal-btn');
+  const cancelTCPingConfigBtn = document.getElementById('cancel-tcping-config-btn');
+  const tcpingConfigForm = document.getElementById('tcping-config-form');
+  const targetsContainer = document.getElementById('tcping-targets-container');
+  const addTargetBtn = document.getElementById('add-target-btn');
+
+  // Function to create a target input row
+  function createTargetInput(target = { name: '', address: '' }) {
+    const div = document.createElement('div');
+    // Use flex-col on mobile, flex-row on larger screens
+    div.className = 'target-row flex flex-col sm:flex-row gap-2 p-3 sm:p-2 rounded-lg border border-[#404040]/30 dark:border-[#404040]/30 border-[#a3a3a3]/30 bg-[#1a1a1a] dark:bg-[#1a1a1a] bg-[#fafafa]';
+    div.innerHTML = `
+      <input
+        type="text"
+        class="target-name-input w-full sm:flex-1 min-w-0 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+        placeholder="Target Name"
+        data-placeholder-en="Target Name"
+        data-placeholder-zh="目标名称"
+        value="${target.name || ''}"
+        required
+      />
+      <input
+        type="text"
+        class="target-address-input w-full sm:flex-1 min-w-0 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
+        placeholder="8.8.8.8:53"
+        value="${target.address || ''}"
+        required
+      />
+      <button
+        type="button"
+        class="remove-target-btn w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] transition-colors hover:bg-[#282828] dark:hover:bg-[#282828] hover:bg-[#f5f5f5] hover:text-red-400 dark:hover:text-red-400 shrink-0"
+        title="Remove target"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0">
+          <path d="M18 6L6 18M6 6l12 12"/>
+        </svg>
+        <span class="sm:hidden" data-translate="remove">Remove</span>
+      </button>
+    `;
+    
+    // Add remove button handler
+    const removeBtn = div.querySelector('.remove-target-btn');
+    removeBtn.addEventListener('click', () => {
+      div.remove();
+    });
+    
+    // Update placeholders based on language
+    const nameInput = div.querySelector('.target-name-input');
+    const addressInput = div.querySelector('.target-address-input');
+    const lang = document.documentElement.lang || 'en';
+    if (nameInput) {
+      const placeholder = nameInput.getAttribute(lang === 'zh' ? 'data-placeholder-zh' : 'data-placeholder-en');
+      if (placeholder) nameInput.setAttribute('placeholder', placeholder);
+    }
+    
+    return div;
+  }
+
+  // Function to load and display current config
+  async function loadTCPingConfig() {
+    try {
+      const res = await fetch(`${apiBase}/api/tcping/config`);
+      if (res.ok) {
+        const config = await res.json();
+        
+        // Set interval (default: 60 seconds)
+        const intervalInput = document.getElementById('tcping-interval');
+        if (intervalInput) {
+          intervalInput.value = config.interval_secs || 60;
+        }
+        
+        // Clear and populate targets
+        if (targetsContainer) {
+          targetsContainer.innerHTML = '';
+          let targets = config.targets || [];
+          
+          // Handle backward compatibility: if targets is an array of strings, convert to objects
+          if (targets.length > 0 && typeof targets[0] === 'string') {
+            targets = targets.map(addr => ({ name: addr, address: addr }));
+          }
+          
+          // Default: empty targets list (user needs to add targets manually)
+          if (targets.length > 0) {
+            targets.forEach(target => {
+              targetsContainer.appendChild(createTargetInput(target));
+            });
+          } else {
+            // Show at least one empty input row for user to add a target
+            targetsContainer.appendChild(createTargetInput());
+          }
+        }
+      }
+    } catch (err) {
+      // Config load failed silently
+    }
+  }
+
+  function openTCPingConfigModal() {
+    if (tcpingConfigModal) {
+      loadTCPingConfig();
+      openModalWithAnimation(tcpingConfigModal);
+    }
+  }
+
+  function closeTCPingConfigModal() {
+    closeModalWithAnimation(tcpingConfigModal, () => {
+      if (tcpingConfigForm) {
+        tcpingConfigForm.reset();
+        const messageEl = document.getElementById('tcping-config-message');
+        if (messageEl) {
+          messageEl.classList.add('hidden');
+          messageEl.textContent = '';
+        }
+      }
+    });
+  }
+
+  tcpingConfigBtn?.addEventListener('click', openTCPingConfigModal);
+  closeTCPingConfigBtn?.addEventListener('click', closeTCPingConfigModal);
+  cancelTCPingConfigBtn?.addEventListener('click', closeTCPingConfigModal);
+  tcpingConfigModal?.addEventListener('click', (e) => {
+    if (e.target === tcpingConfigModal) closeTCPingConfigModal();
+  });
+
+  // Add target button
+  addTargetBtn?.addEventListener('click', () => {
+    if (targetsContainer) {
+      targetsContainer.appendChild(createTargetInput());
+    }
+  });
+
+  // Form submission
+  tcpingConfigForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const intervalInput = document.getElementById('tcping-interval');
+    const interval = parseInt(intervalInput?.value || '60');
+    
+    // Collect all target values (name and address pairs)
+    const targetRows = targetsContainer?.querySelectorAll('.target-row') || [];
+    const targets = [];
+    
+    for (const row of targetRows) {
+      const nameInput = row.querySelector('.target-name-input');
+      const addressInput = row.querySelector('.target-address-input');
+      
+      if (nameInput && addressInput) {
+        const name = nameInput.value.trim();
+        const address = addressInput.value.trim();
+        
+        if (name && address) {
+          targets.push({ name, address });
+        } else if (address) {
+          // If only address is provided, use address as name
+          targets.push({ name: address, address });
+        }
+      }
+    }
+    
+    // Allow empty targets list (default state - tcping disabled)
+    // No validation needed for empty targets
+    
+    const config = {
+      targets: targets,
+      interval_secs: interval
+    };
+    
+    const submitBtn = tcpingConfigForm.querySelector('button[type="submit"]');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Saving...';
+    }
+    
+    try {
+      const res = await fetch(`${apiBase}/api/tcping/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      });
+      
+      if (res.ok) {
+        // Close modal immediately on success
+        closeTCPingConfigModal();
+      } else {
+        const messageEl = document.getElementById('tcping-config-message');
+        const error = await res.text();
+        if (messageEl) {
+          messageEl.textContent = `Failed to save: ${error}`;
+          messageEl.className = 'text-sm text-red-400';
+          messageEl.classList.remove('hidden');
+        }
+      }
+    } catch (err) {
+      const messageEl = document.getElementById('tcping-config-message');
+      if (messageEl) {
+        messageEl.textContent = `Error: ${err.message}`;
+        messageEl.className = 'text-sm text-red-400';
+        messageEl.classList.remove('hidden');
+      }
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Save';
+      }
+    }
+  });
+
+  // Connect to SSE for real-time updates from other clients or agents
+  function connectSSE() {
+    if (eventSource) {
+      eventSource.close();
+    }
+
+    eventSource = new EventSource(`${apiBase}/api/events`);
+
+    eventSource.addEventListener('connected', (e) => {
+      // Admin connected to update stream
+    });
+
+    eventSource.addEventListener('update', (e) => {
+      const update = JSON.parse(e.data);
+      
+      // Reload when metrics are updated or deleted (incremental update will handle changes)
+      // (order updates are handled locally by drag & drop)
+      if (update.type === 'metric_updated' || update.type === 'metric_deleted') {
+  loadSystems();
+      }
+    });
+
+    eventSource.onerror = (err) => {
+      eventSource.close();
+      // Reconnect after 5 seconds
+      setTimeout(connectSSE, 5000);
+    };
+  }
+
+  // Initial load
+    loadSystems();
+  connectSSE();
+
+  // Cleanup on page unload
+  window.addEventListener('beforeunload', () => {
+    // Stop auto-scroll if active
+    stopAutoScroll();
+    
+    // Close SSE connection
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+    
+    // Clean up dragged element state
+    draggedElement = null;
+    draggedIndex = null;
+  });
+
+  // Translation functionality for AdminDashboard
+  const adminTranslations = {
+    'systemList': { en: 'Service List', zh: '服务列表' },
+    'addSystem': { en: 'Add Service', zh: '添加服务' },
+    'refresh': { en: 'Refresh', zh: '刷新' },
+    'tcpingSettings': { en: 'TCPing Settings', zh: 'TCPing 设置' },
+    'pollingInterval': { en: 'Polling Interval', zh: '轮询间隔' },
+    'seconds': { en: 'seconds', zh: '秒' },
+    'pollingIntervalDesc': { en: 'How often to send tcping requests to clients', zh: '向客户端发送 tcping 请求的频率' },
+    'tcpingTargets': { en: 'TCPing Targets', zh: 'TCPing 目标' },
+    'addTarget': { en: '+ Add Target', zh: '+ 添加目标' },
+    'targetFormatDesc': { en: 'Format: name and address (e.g., Google DNS, 8.8.8.8:53)', zh: '格式：名称和地址（例如：Google DNS, 8.8.8.8:53）' },
+    'targetName': { en: 'Target Name', zh: '目标名称' },
+    'save': { en: 'Save', zh: '保存' },
+    'loadingSystems': { en: 'Loading services...', zh: '加载服务中...' },
+    'addNewSystem': { en: 'Add New Service', zh: '添加新服务' },
+    'editSystem': { en: 'Edit Service', zh: '编辑服务' },
+    'deleteSystem': { en: 'Delete Service', zh: '删除服务' },
+    'systemName': { en: 'Service Name', zh: '服务名称' },
+    'displayNameForThisSystem': { en: 'Display name for this system', zh: '此服务的显示名称' },
+    'myServer': { en: 'My Server', zh: '我的服务器' },
+    'cancel': { en: 'Cancel', zh: '取消' },
+    'updateSystem': { en: 'Update System', zh: '更新服务' },
+    'areYouSureYouWantToDelete': { en: 'Are you sure you want to delete', zh: '您确定要删除' },
+    'thisActionCannotBeUndone': { en: 'This action cannot be undone.', zh: '此操作无法撤销。' },
+    'delete': { en: 'Delete', zh: '删除' },
+    'remove': { en: 'Remove', zh: '移除' },
+    'note': { en: 'Note:', zh: '注意:' },
+    'noteContent': { en: 'IP addresses, location, OS and metrics are automatically updated by the agent and cannot be edited manually.', zh: 'IP 地址、位置、操作系统和指标由代理自动更新，无法手动编辑。' },
+    'changePassword': { en: 'Change Password', zh: '修改密码' },
+    'currentPassword': { en: 'Current Password', zh: '当前密码' },
+    'newPassword': { en: 'New Password', zh: '新密码' },
+    'confirmNewPassword': { en: 'Confirm New Password', zh: '确认新密码' },
+    'passwordMinLength': { en: 'Password must be at least 6 characters long', zh: '密码长度至少为6个字符' },
+  };
+
+  function updateAdminTranslations() {
+    const lang = localStorage.getItem('preferred-language') || 'en';
+    
+    // Update all elements with data-translate attribute
+    document.querySelectorAll('[data-translate]').forEach(el => {
+      const key = el.getAttribute('data-translate');
+      if (key && adminTranslations[key]) {
+        el.textContent = adminTranslations[key][lang];
+      }
+    });
+
+    // Update title attributes
+    document.querySelectorAll('[data-title-en]').forEach(el => {
+      const enTitle = el.getAttribute('data-title-en');
+      const zhTitle = el.getAttribute('data-title-zh');
+      if (enTitle && zhTitle) {
+        el.setAttribute('title', lang === 'zh' ? zhTitle : enTitle);
+      }
+    });
+
+    // Update placeholder attributes
+    document.querySelectorAll('[data-placeholder-en]').forEach(el => {
+      const enPlaceholder = el.getAttribute('data-placeholder-en');
+      const zhPlaceholder = el.getAttribute('data-placeholder-zh');
+      if (enPlaceholder && zhPlaceholder) {
+        el.setAttribute('placeholder', lang === 'zh' ? zhPlaceholder : enPlaceholder);
+      }
+    });
+  }
+
+  // Listen for language changes
+  window.addEventListener('languagechange', updateAdminTranslations);
+  window.addEventListener('translate', updateAdminTranslations);
+
+  // Initial translation
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', updateAdminTranslations);
+  } else {
+    updateAdminTranslations();
+  }
+</script>

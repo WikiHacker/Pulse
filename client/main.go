@@ -1,0 +1,2122 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/disk"
+	"github.com/shirou/gopsutil/v3/host"
+	"github.com/shirou/gopsutil/v3/mem"
+	netutil "github.com/shirou/gopsutil/v3/net"
+)
+
+type metricPayload struct {
+	ID                 string  `json:"id"`
+	Name               string  `json:"name"`
+	IPv4               string  `json:"ipv4,omitempty"`
+	IPv6               string  `json:"ipv6,omitempty"`
+	Uptime             int64   `json:"uptime"` // Uptime in seconds since agent started
+	Location           string  `json:"location,omitempty"`
+	VirtualizationType string  `json:"virtualization_type,omitempty"` // "VPS" or "DS"
+	OS                 string  `json:"os,omitempty"`
+	OSIcon             string  `json:"os_icon,omitempty"`
+	CPU                float64 `json:"cpu"`
+	CPUModel           string  `json:"cpu_model,omitempty"`
+	Memory             float64 `json:"memory"`
+	MemoryInfo         string  `json:"memory_info,omitempty"`   // Format: "383.60 MiB / 1.88 GiB"
+	SwapInfo           string  `json:"swap_info,omitempty"`     // Format: "75.12 MiB / 975.00 MiB"
+	Disk               float64 `json:"disk"`
+	DiskInfo           string  `json:"disk_info,omitempty"`     // Format: "9.86 GiB / 18.58 GiB"
+	NetInMBps          float64 `json:"net_in_mb_s"`
+	NetOutMBps         float64 `json:"net_out_mb_s"`
+	TotalNetInBytes    uint64  `json:"total_net_in_bytes,omitempty"`  // Total received bytes
+	TotalNetOutBytes   uint64  `json:"total_net_out_bytes,omitempty"` // Total transmitted bytes
+	AgentVersion       string  `json:"agent_version"`
+	Alert              bool    `json:"alert"`
+}
+
+var (
+	agentID       string
+	agentName     string
+	startTime     time.Time
+	serverBase    string
+	
+	// Cache for data that doesn't change frequently
+	cpuModelCache          string
+	cpuModelCacheTime      time.Time
+	virtualizationTypeCache string
+	virtualizationTypeCacheTime time.Time
+	cacheMutex             sync.RWMutex
+	cacheTTL               = 5 * time.Minute // Cache for 5 minutes
+)
+
+func main() {
+	agentID = envOr("AGENT_ID", "localhost")
+	agentName = envOr("AGENT_NAME", agentID)
+	serverBase = strings.TrimSuffix(envOr("SERVER_BASE", "http://localhost:8080"), "/")
+	clientPort := envOr("CLIENT_PORT", "9090")
+
+	// Record start time for uptime calculation
+	startTime = time.Now()
+
+	log.Printf("🚀 Starting Probe Client (ID: %s, Name: %s)", agentID, agentName)
+
+	// Initial registration with server
+	go registerWithServer()
+	
+	// Start periodic re-registration to maintain connection
+	// This ensures the client auto-recovers if removed from server registry
+	go startPeriodicRegistration()
+
+	// Start HTTP server to receive requests from backend
+	mux := http.NewServeMux()
+	mux.HandleFunc("/metrics", handleMetricsRequest)
+	mux.HandleFunc("/health", handleHealth)
+	mux.HandleFunc("/tcping", handleTCPingRequest)
+
+	addr := ":" + clientPort
+	log.Printf("📡 Client listening on %s", addr)
+
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		log.Fatalf("❌ Failed to start client server: %v", err)
+	}
+}
+
+// Register client with server
+func registerWithServer() {
+	// Retry registration with exponential backoff
+	maxRetries := 5
+	for i := 0; i < maxRetries; i++ {
+		time.Sleep(time.Duration(i+1) * time.Second) // Wait before retry
+		
+		// Get local IP address
+		localIP := getLocalIP()
+		
+		payload := map[string]string{
+			"id":   agentID,
+			"name": agentName,
+			"port": envOr("CLIENT_PORT", "9090"),
+			"ip":   localIP,
+		}
+		
+		data, _ := json.Marshal(payload)
+		
+		// Use a stable HTTP client with optimized connection pooling
+		httpClient := &http.Client{
+			Timeout: 5 * time.Second,
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout:   3 * time.Second,
+					KeepAlive: 60 * time.Second, // Longer keep-alive for connection reuse
+				}).DialContext,
+				MaxIdleConns:          10,
+				MaxIdleConnsPerHost:   5,  // Per-host connection limit
+				IdleConnTimeout:       90 * time.Second, // Longer idle timeout
+				TLSHandshakeTimeout:   3 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+				DisableCompression:    false, // Enable compression
+			},
+		}
+		
+		req, err := http.NewRequest("POST", serverBase+"/api/clients/register", strings.NewReader(string(data)))
+		if err != nil {
+			continue
+		}
+		
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "PulseClient/1.0")
+		req.Header.Set("Connection", "keep-alive")
+		req.Header.Set("Accept-Encoding", "gzip, deflate") // Enable compression
+		
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			continue
+		}
+		defer resp.Body.Close()
+		
+		if resp.StatusCode == http.StatusOK {
+			log.Printf("✅ Registered with server")
+			return
+		}
+	}
+}
+
+func getLocalIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String()
+}
+
+// startPeriodicRegistration maintains connection with server by periodically re-registering
+// This handles: 1) Server restart, 2) Client removed from registry due to failures, 3) Network recovery
+func startPeriodicRegistration() {
+	// Wait for initial registration to complete
+	time.Sleep(10 * time.Second)
+	
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	
+	
+	// Reuse HTTP client for efficiency
+	httpClient := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{
+				Timeout:   3 * time.Second,
+				KeepAlive: 60 * time.Second,
+			}).DialContext,
+			MaxIdleConns:          10,
+			MaxIdleConnsPerHost:   5,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   3 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
+	
+	consecutiveFailures := 0
+	
+	for range ticker.C {
+		localIP := getLocalIP()
+		
+		payload := map[string]string{
+			"id":   agentID,
+			"name": agentName,
+			"port": envOr("CLIENT_PORT", "9090"),
+			"ip":   localIP,
+		}
+		
+		data, _ := json.Marshal(payload)
+		
+		req, err := http.NewRequest("POST", serverBase+"/api/clients/register", strings.NewReader(string(data)))
+		if err != nil {
+			consecutiveFailures++
+			continue
+		}
+		
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "PulseClient/1.0")
+		req.Header.Set("Connection", "keep-alive")
+		
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			consecutiveFailures++
+			continue
+		}
+		resp.Body.Close()
+		
+		if resp.StatusCode == http.StatusOK {
+			consecutiveFailures = 0
+		} else if resp.StatusCode == http.StatusNotFound {
+			// Server ID not found in database - this is expected if admin hasn't added this system yet
+			// Just silently continue trying
+			consecutiveFailures++
+		} else {
+			consecutiveFailures++
+		}
+	}
+}
+
+// Handle metrics request from backend
+func handleMetricsRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Collect system metrics
+	metrics := collectSystemMetrics()
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(metrics)
+}
+
+// Handle health check
+func handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("ok"))
+}
+
+// TCPingResponse represents the response from tcping
+type TCPingResponse struct {
+	Latency float64 `json:"latency"` // Latency in milliseconds
+	Success bool    `json:"success"`
+	Error   string  `json:"error,omitempty"`
+}
+
+// TCPingRequest represents the request from backend
+type TCPingRequest struct {
+	Target string `json:"target"`
+}
+
+// Handle tcping request from backend
+func handleTCPingRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse target from request body
+	var tcpingReq TCPingRequest
+	if err := json.NewDecoder(r.Body).Decode(&tcpingReq); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Target must be provided by backend - no default fallback
+	if tcpingReq.Target == "" {
+		http.Error(w, "target is required", http.StatusBadRequest)
+		return
+	}
+
+	// Execute tcping to target specified by backend
+	latency, err := executeTCPing(tcpingReq.Target)
+	
+	response := TCPingResponse{
+		Success: err == nil,
+		Latency: latency,
+	}
+	
+	if err != nil {
+		response.Error = err.Error()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// Execute tcping command
+func executeTCPing(target string) (float64, error) {
+	// Use net.DialTimeout to measure TCP connection latency
+	// Use shorter timeout (3 seconds) to avoid blocking the HTTP request handler too long
+	start := time.Now()
+	conn, err := net.DialTimeout("tcp", target, 3*time.Second)
+	if err != nil {
+		return 0, fmt.Errorf("connection failed: %v", err)
+	}
+	defer conn.Close()
+	
+	latency := time.Since(start).Seconds() * 1000 // Convert to milliseconds
+	return latency, nil
+}
+
+// Collect system metrics
+func collectSystemMetrics() metricPayload {
+	// Get system uptime (not process uptime) from /proc/uptime
+	uptime := getSystemUptime()
+	
+	// Get system information
+	osInfo := getOSInfo()
+	ipv4, ipv6 := getIPAddresses()
+	location := getLocation() // Only country
+	
+	// Get system metrics
+	cpu := getCPUUsage()
+	cpuModel := getCPUModel()
+	memory := getMemoryUsage()
+	memoryInfo := getMemoryInfo()
+	swapInfo := getSwapInfo()
+	disk := getDiskUsage()
+	diskInfo := getDiskInfo()
+	netIn, netOut, totalNetInBytes, totalNetOutBytes := getNetworkStats()
+	virtualizationType := getVirtualizationType()
+	
+	return metricPayload{
+		ID:                 agentID,
+		Name:               agentName,
+		IPv4:               ipv4,
+		IPv6:               ipv6,
+		Uptime:             uptime,
+		Location:           location,
+		VirtualizationType: virtualizationType,
+		OS:                 osInfo.Name,
+		OSIcon:             osInfo.Icon,
+		CPU:                cpu,
+		CPUModel:           cpuModel,
+		Memory:             memory,
+		MemoryInfo:         memoryInfo,
+		SwapInfo:           swapInfo,
+		Disk:               disk,
+		DiskInfo:           diskInfo,
+		NetInMBps:          netIn,
+		NetOutMBps:         netOut,
+		TotalNetInBytes:    totalNetInBytes,
+		TotalNetOutBytes:   totalNetOutBytes,
+		AgentVersion:       "0.8.0",
+		Alert:              false, // Can be enhanced with actual alert logic
+	}
+}
+
+type OSInfo struct {
+	Name string
+	Icon string
+}
+
+func getOSInfo() OSInfo {
+	osName := runtime.GOOS
+	var name, icon string
+	
+	switch osName {
+	case "linux":
+		name = detectLinuxDistro()
+		icon = getOSIcon(name)
+	case "darwin":
+		name = "macOS"
+		icon = "devicon:apple"
+	case "windows":
+		name = "Windows"
+		icon = "logos:microsoft-windows-icon"
+	default:
+		name = strings.Title(osName)
+		icon = "devicon:linux"
+	}
+	
+	return OSInfo{Name: name, Icon: icon}
+}
+
+func detectLinuxDistro() string {
+	// Try to detect Linux distribution from /etc/os-release
+	data, err := ioutil.ReadFile("/etc/os-release")
+	if err == nil {
+		content := string(data)
+		contentLower := strings.ToLower(content)
+		
+		// Check for specific distributions (order matters - check specific ones first)
+		if strings.Contains(contentLower, "pop!_os") || strings.Contains(contentLower, "pop os") {
+			return "Pop!_OS"
+		} else if strings.Contains(contentLower, "linux mint") || strings.Contains(contentLower, "linuxmint") {
+			return "Linux Mint"
+		} else if strings.Contains(contentLower, "elementary") {
+			return "Elementary OS"
+		} else if strings.Contains(contentLower, "zorin") {
+			return "Zorin OS"
+		} else if strings.Contains(contentLower, "kali") {
+			return "Kali Linux"
+		} else if strings.Contains(contentLower, "parrot") {
+			return "Parrot OS"
+		} else if strings.Contains(contentLower, "manjaro") {
+			return "Manjaro"
+		} else if strings.Contains(contentLower, "endeavour") {
+			return "EndeavourOS"
+		} else if strings.Contains(contentLower, "garuda") {
+			return "Garuda Linux"
+		} else if strings.Contains(contentLower, "arch") {
+			return "Arch Linux"
+		} else if strings.Contains(contentLower, "ubuntu") {
+			return "Ubuntu"
+		} else if strings.Contains(contentLower, "debian") {
+			return "Debian"
+		} else if strings.Contains(contentLower, "rocky") {
+			return "Rocky Linux"
+		} else if strings.Contains(contentLower, "almalinux") || strings.Contains(contentLower, "alma") {
+			return "AlmaLinux"
+		} else if strings.Contains(contentLower, "centos") {
+			return "CentOS"
+		} else if strings.Contains(contentLower, "red hat") || strings.Contains(contentLower, "rhel") {
+			return "RHEL"
+		} else if strings.Contains(contentLower, "oracle") {
+			return "Oracle Linux"
+		} else if strings.Contains(contentLower, "fedora") {
+			return "Fedora"
+		} else if strings.Contains(contentLower, "opensuse") || strings.Contains(contentLower, "suse") {
+			return "openSUSE"
+		} else if strings.Contains(contentLower, "alpine") {
+			return "Alpine Linux"
+		} else if strings.Contains(contentLower, "gentoo") {
+			return "Gentoo"
+		} else if strings.Contains(contentLower, "void") {
+			return "Void Linux"
+		} else if strings.Contains(contentLower, "slackware") {
+			return "Slackware"
+		} else if strings.Contains(contentLower, "nixos") {
+			return "NixOS"
+		} else if strings.Contains(contentLower, "solus") {
+			return "Solus"
+		} else if strings.Contains(contentLower, "mageia") {
+			return "Mageia"
+		} else if strings.Contains(contentLower, "pclinuxos") {
+			return "PCLinuxOS"
+		} else if strings.Contains(contentLower, "clearlinux") || strings.Contains(contentLower, "clear linux") {
+			return "Clear Linux"
+		}
+	}
+	
+	// Fallback: try reading /etc/issue
+	if data, err := ioutil.ReadFile("/etc/issue"); err == nil {
+		content := strings.ToLower(string(data))
+		if strings.Contains(content, "ubuntu") {
+			return "Ubuntu"
+		} else if strings.Contains(content, "debian") {
+			return "Debian"
+		} else if strings.Contains(content, "centos") {
+			return "CentOS"
+		} else if strings.Contains(content, "fedora") {
+			return "Fedora"
+		} else if strings.Contains(content, "arch") {
+			return "Arch Linux"
+		}
+	}
+	
+	return "Linux"
+}
+
+func getOSIcon(osName string) string {
+	osLower := strings.ToLower(osName)
+	
+	// Priority: devicon (colored) > logos (colored) > use generic linux icon
+	// Debian-based distributions
+	if strings.Contains(osLower, "ubuntu") {
+		return "logos:ubuntu" // Colored Ubuntu logo
+	} else if strings.Contains(osLower, "pop") {
+		return "logos:pop-os" // Colored Pop!_OS logo
+	} else if strings.Contains(osLower, "mint") {
+		return "logos:linux-mint" // Colored Linux Mint logo
+	} else if strings.Contains(osLower, "elementary") {
+		return "logos:elementary" // Elementary OS logo
+	} else if strings.Contains(osLower, "zorin") {
+		return "devicon:linux" // No colored icon available, use generic
+	} else if strings.Contains(osLower, "kali") {
+		return "logos:kalilinux" // Kali Linux logo
+	} else if strings.Contains(osLower, "parrot") {
+		return "devicon:linux" // No colored icon available, use generic
+	} else if strings.Contains(osLower, "debian") {
+		return "logos:debian" // Colored Debian logo
+	
+	// Arch-based distributions
+	} else if strings.Contains(osLower, "manjaro") {
+		return "logos:manjaro" // Colored Manjaro logo
+	} else if strings.Contains(osLower, "endeavour") {
+		return "devicon:archlinux" // Use Arch logo as fallback
+	} else if strings.Contains(osLower, "garuda") {
+		return "devicon:archlinux" // Use Arch logo as fallback
+	} else if strings.Contains(osLower, "arch") {
+		return "logos:archlinux" // Colored Arch Linux logo
+	
+	// Red Hat-based distributions
+	} else if strings.Contains(osLower, "rocky") {
+		return "logos:rockylinux" // Colored Rocky Linux logo
+	} else if strings.Contains(osLower, "alma") {
+		return "logos:almalinux" // Colored AlmaLinux logo
+	} else if strings.Contains(osLower, "centos") {
+		return "logos:centos" // Colored CentOS logo
+	} else if strings.Contains(osLower, "red hat") || strings.Contains(osLower, "rhel") {
+		return "logos:redhat" // Colored Red Hat logo
+	} else if strings.Contains(osLower, "oracle") {
+		return "devicon:oracle" // Oracle logo (from devicon)
+	} else if strings.Contains(osLower, "fedora") {
+		return "logos:fedora" // Colored Fedora logo
+	
+	// Independent distributions
+	} else if strings.Contains(osLower, "opensuse") || strings.Contains(osLower, "suse") {
+		return "logos:suse" // Colored SUSE logo
+	} else if strings.Contains(osLower, "alpine") {
+		return "logos:alpine" // Colored Alpine logo
+	} else if strings.Contains(osLower, "gentoo") {
+		return "logos:gentoo" // Colored Gentoo logo
+	} else if strings.Contains(osLower, "void") {
+		return "devicon:linux" // No colored icon available, use generic
+	} else if strings.Contains(osLower, "slackware") {
+		return "logos:slackware" // Colored Slackware logo
+	} else if strings.Contains(osLower, "nixos") {
+		return "logos:nixos" // Colored NixOS logo
+	} else if strings.Contains(osLower, "solus") {
+		return "devicon:linux" // No colored icon available, use generic
+	} else if strings.Contains(osLower, "mageia") {
+		return "devicon:linux" // No colored icon available, use generic
+	} else if strings.Contains(osLower, "clear") {
+		return "devicon:linux" // No colored icon available, use generic
+	}
+	
+	// Default Linux icon (Tux)
+	return "devicon:linux"
+}
+
+// isPrivateIP checks if an IP address is a private/local address
+func isPrivateIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	
+	// Check IPv4 private ranges
+	if ip4 := ip.To4(); ip4 != nil {
+		// Loopback: 127.0.0.0/8
+		if ip4[0] == 127 {
+			return true
+		}
+		// Private: 10.0.0.0/8
+		if ip4[0] == 10 {
+			return true
+		}
+		// Private: 172.16.0.0/12 (includes 172.17.0.0/16 used by Docker)
+		if ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31 {
+			return true
+		}
+		// Private: 192.168.0.0/16
+		if ip4[0] == 192 && ip4[1] == 168 {
+			return true
+		}
+		// Link-local: 169.254.0.0/16
+		if ip4[0] == 169 && ip4[1] == 254 {
+			return true
+		}
+		// Multicast: 224.0.0.0/4
+		if ip4[0] >= 224 && ip4[0] <= 239 {
+			return true
+		}
+		return false
+	}
+	
+	// Check IPv6 private ranges
+	// Loopback: ::1
+	if ip.IsLoopback() {
+		return true
+	}
+	// Link-local: fe80::/10
+	if ip[0] == 0xfe && (ip[1]&0xc0) == 0x80 {
+		return true
+	}
+	// Unique local: fc00::/7
+	if ip[0] == 0xfc || ip[0] == 0xfd {
+		return true
+	}
+	// Multicast: ff00::/8
+	if ip[0] == 0xff {
+		return true
+	}
+	// IPv4-mapped IPv6 addresses (::ffff:0:0/96) - check if mapped IPv4 is private
+	if len(ip) == 16 && ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0 &&
+		ip[4] == 0 && ip[5] == 0 && ip[6] == 0 && ip[7] == 0 &&
+		ip[8] == 0 && ip[9] == 0 && ip[10] == 0xff && ip[11] == 0xff {
+		// Extract IPv4 from IPv4-mapped IPv6
+		ipv4 := net.IP(ip[12:16])
+		return isPrivateIP(ipv4)
+	}
+	
+	return false
+}
+
+func getIPAddresses() (ipv4, ipv6 string) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return "", ""
+	}
+	
+	// Collect all candidate IPs
+	var ipv4Candidates []net.IP
+	var ipv6Candidates []net.IP
+	
+	for _, iface := range interfaces {
+		// Skip down interfaces and loopback
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		
+		// Skip Docker, bridge, and virtual interfaces
+		name := strings.ToLower(iface.Name)
+		if strings.HasPrefix(name, "docker") || strings.HasPrefix(name, "br-") ||
+			strings.HasPrefix(name, "veth") || strings.HasPrefix(name, "virbr") ||
+			strings.HasPrefix(name, "vmnet") || strings.HasPrefix(name, "lxcbr") {
+			continue
+		}
+		
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			
+			ip := ipNet.IP
+			if ip == nil {
+				continue
+			}
+			
+			// Skip private IPs
+			if isPrivateIP(ip) {
+				continue
+			}
+			
+			// Collect public IPs
+			if ip4 := ip.To4(); ip4 != nil {
+				ipv4Candidates = append(ipv4Candidates, ip)
+			} else if ip.To16() != nil {
+				ipv6Candidates = append(ipv6Candidates, ip)
+			}
+		}
+	}
+	
+	// Prefer IPs from interfaces that are not point-to-point (usually better for public IPs)
+	// For now, just take the first public IP found
+	if len(ipv4Candidates) > 0 {
+		ipv4 = ipv4Candidates[0].String()
+	}
+	if len(ipv6Candidates) > 0 {
+		ipv6 = ipv6Candidates[0].String()
+	}
+	
+	// If no public IP found via interfaces, try external API as fallback (only for IPv4)
+	if ipv4 == "" {
+		ipv4 = getPublicIPv4()
+	}
+	
+	return ipv4, ipv6
+}
+
+// getPublicIPv4 tries to get public IPv4 from external API as fallback
+func getPublicIPv4() string {
+	// Try multiple services for reliability
+	services := []string{
+		"https://api.ipify.org",
+		"https://icanhazip.com",
+		"https://ifconfig.me/ip",
+	}
+	
+	for _, service := range services {
+		client := &http.Client{
+			Timeout: 3 * time.Second,
+		}
+		resp, err := client.Get(service)
+		if err != nil {
+			continue
+	}
+	defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				continue
+			}
+			ipStr := strings.TrimSpace(string(body))
+			ip := net.ParseIP(ipStr)
+			if ip != nil && ip.To4() != nil && !isPrivateIP(ip) {
+				return ipStr
+			}
+		}
+	}
+	
+	return ""
+}
+
+func getLocation() string {
+	// Get location (country only)
+	location := envOr("LOCATION", "")
+	if location != "" {
+		// Extract only country part
+		parts := strings.Split(location, ",")
+		if len(parts) > 0 {
+			country := strings.TrimSpace(parts[len(parts)-1])
+			// Remove any extra details, keep only country name
+			countryParts := strings.Fields(country)
+			if len(countryParts) > 0 {
+				return countryParts[0]
+			}
+			return country
+		}
+		return strings.TrimSpace(location)
+	}
+	
+	// Try to detect from system timezone or IP (simplified)
+	// In production, use proper geolocation service
+	return ""
+}
+
+// CPU stats tracking for accurate calculation
+var (
+	lastCPUStats cpuStats
+	lastCPUStatsTime time.Time
+	cpuStatsMutex sync.Mutex
+)
+
+type cpuStats struct {
+	Total uint64
+	Idle  uint64
+}
+
+func getCPUUsage() float64 {
+	// Use gopsutil for cross-platform support
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		// Use instant reading (0 interval) for immediate response
+		// This gets the CPU usage since last call, much faster than waiting
+		percent, err := cpu.Percent(0, false)
+		if err == nil && len(percent) > 0 {
+			usage := percent[0]
+			if usage < 0 {
+				usage = 0
+			}
+			if usage > 100 {
+				usage = 100
+			}
+			return usage
+		}
+		return 0.0
+	}
+	
+	cpuStatsMutex.Lock()
+	defer cpuStatsMutex.Unlock()
+	
+	// Read /proc/stat for accurate CPU usage (Linux)
+	data, err := ioutil.ReadFile("/proc/stat")
+	if err != nil {
+		return 0.0
+	}
+	
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "cpu ") {
+			fields := strings.Fields(line)
+			if len(fields) < 8 {
+				continue
+			}
+			
+			// Parse CPU stats: user, nice, system, idle, iowait, irq, softirq, steal, guest, guest_nice
+			var user, nice, system, idle, iowait, irq, softirq, steal, guest, guestNice uint64
+			fmt.Sscanf(fields[1], "%d", &user)
+			fmt.Sscanf(fields[2], "%d", &nice)
+			fmt.Sscanf(fields[3], "%d", &system)
+			fmt.Sscanf(fields[4], "%d", &idle)
+			if len(fields) > 5 {
+				fmt.Sscanf(fields[5], "%d", &iowait)
+			}
+			if len(fields) > 6 {
+				fmt.Sscanf(fields[6], "%d", &irq)
+			}
+			if len(fields) > 7 {
+				fmt.Sscanf(fields[7], "%d", &softirq)
+			}
+			if len(fields) > 8 {
+				fmt.Sscanf(fields[8], "%d", &steal)
+			}
+			if len(fields) > 9 {
+				fmt.Sscanf(fields[9], "%d", &guest)
+			}
+			if len(fields) > 10 {
+				fmt.Sscanf(fields[10], "%d", &guestNice)
+			}
+			
+			// Calculate total CPU time (excluding guest time to avoid double counting)
+			total := user + nice + system + idle + iowait + irq + softirq + steal
+			idleTotal := idle + iowait
+			
+			currentStats := cpuStats{
+				Total: total,
+				Idle:  idleTotal,
+			}
+			
+			now := time.Now()
+			
+			// If we have previous stats, calculate usage percentage
+			if lastCPUStats.Total > 0 && !lastCPUStatsTime.IsZero() {
+				elapsed := now.Sub(lastCPUStatsTime).Seconds()
+				if elapsed > 0 {
+					totalDiff := float64(currentStats.Total) - float64(lastCPUStats.Total)
+					idleDiff := float64(currentStats.Idle) - float64(lastCPUStats.Idle)
+					
+					// Handle counter wrap-around
+					if totalDiff < 0 {
+						totalDiff = float64(currentStats.Total)
+					}
+					if idleDiff < 0 {
+						idleDiff = float64(currentStats.Idle)
+					}
+					
+					if totalDiff > 0 {
+						usage := ((totalDiff - idleDiff) / totalDiff) * 100.0
+						if usage < 0 {
+							usage = 0
+						}
+						if usage > 100 {
+							usage = 100
+						}
+						
+						// Update last stats
+						lastCPUStats = currentStats
+						lastCPUStatsTime = now
+						
+						return usage
+					}
+				}
+			}
+			
+			// First call or no previous stats - store current stats and return 0
+			lastCPUStats = currentStats
+			lastCPUStatsTime = now
+			return 0.0
+		}
+	}
+	
+	return 0.0
+}
+
+func getMemoryUsage() float64 {
+	// Use gopsutil for cross-platform support
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		vmStat, err := mem.VirtualMemory()
+		if err == nil {
+			// Ensure percentage is within 0-100 range
+			percent := vmStat.UsedPercent
+			if percent < 0 {
+				percent = 0
+			}
+			if percent > 100 {
+				percent = 100
+			}
+			return percent
+		}
+		return 0.0
+	}
+	
+	// Read /proc/meminfo for accurate memory usage (Linux)
+	data, err := ioutil.ReadFile("/proc/meminfo")
+	if err != nil {
+		// Fallback to free command
+		cmd := exec.Command("sh", "-c", "free | grep Mem | awk '{printf \"%.1f\", $3/$2 * 100.0}'")
+		output, err := cmd.Output()
+		if err == nil {
+			var mem float64
+			if _, err := fmt.Sscanf(strings.TrimSpace(string(output)), "%f", &mem); err == nil {
+				return mem
+			}
+		}
+		return 0.0
+	}
+	
+	// Parse /proc/meminfo
+	var memTotal, memAvailable, memFree, buffers, cached uint64
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		
+		key := strings.TrimSuffix(fields[0], ":")
+		value := fields[1]
+		
+		switch key {
+		case "MemTotal":
+			fmt.Sscanf(value, "%d", &memTotal)
+		case "MemAvailable":
+			fmt.Sscanf(value, "%d", &memAvailable)
+		case "MemFree":
+			fmt.Sscanf(value, "%d", &memFree)
+		case "Buffers":
+			fmt.Sscanf(value, "%d", &buffers)
+		case "Cached":
+			fmt.Sscanf(value, "%d", &cached)
+		}
+	}
+	
+	if memTotal == 0 {
+		return 0.0
+	}
+	
+	// Calculate used memory
+	// If MemAvailable is available (kernel 3.14+), use it for more accurate calculation
+	var memUsed uint64
+	if memAvailable > 0 {
+		memUsed = memTotal - memAvailable
+	} else {
+		// Fallback: MemTotal - MemFree - Buffers - Cached
+		memUsed = memTotal - memFree - buffers - cached
+	}
+	
+	// Calculate percentage
+	usage := (float64(memUsed) / float64(memTotal)) * 100.0
+	if usage < 0 {
+		usage = 0
+	}
+	if usage > 100 {
+		usage = 100
+	}
+	
+	return usage
+}
+
+func getDiskUsage() float64 {
+	// Use gopsutil for cross-platform support
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		// Get all partitions and calculate weighted average
+		partitions, err := disk.Partitions(false)
+		if err == nil {
+			var totalSize, totalUsed uint64
+			for _, partition := range partitions {
+				// Skip system reserved partitions on Windows
+				if runtime.GOOS == "windows" {
+					// Only include partitions with drive letters (C:, D:, etc.)
+					if len(partition.Mountpoint) >= 2 && partition.Mountpoint[1] == ':' {
+						usage, err := disk.Usage(partition.Mountpoint)
+						if err == nil && usage.Total > 0 {
+							totalSize += usage.Total
+							totalUsed += usage.Used
+						}
+					}
+				} else {
+					usage, err := disk.Usage(partition.Mountpoint)
+					if err == nil && usage.Total > 0 {
+						totalSize += usage.Total
+						totalUsed += usage.Used
+					}
+				}
+			}
+			if totalSize > 0 {
+				usage := (float64(totalUsed) / float64(totalSize)) * 100.0
+				if usage < 0 {
+					usage = 0
+				}
+				if usage > 100 {
+					usage = 100
+				}
+				return usage
+			}
+		}
+		return 0.0
+	}
+	
+	// Get disk usage percentage for all mounted filesystems (Linux)
+	// Use df -B1 to get exact byte values (not human-readable)
+	// Use %.0f format to avoid integer overflow in awk (32-bit int max is 2147483647)
+	cmd := exec.Command("sh", "-c", "df -B1 --exclude-type=tmpfs --exclude-type=devtmpfs --exclude-type=squashfs 2>/dev/null | tail -n +2 | awk '{total+=$2; used+=$3} END {if (total>0) printf \"%.1f\\n\", (used/total)*100; else print \"0\"}'")
+	output, err := cmd.Output()
+	if err == nil {
+		outputStr := strings.TrimSpace(string(output))
+		if outputStr != "" && outputStr != "0" {
+			var usage float64
+			if _, err := fmt.Sscanf(outputStr, "%f", &usage); err == nil {
+				if usage < 0 {
+					usage = 0
+				}
+				if usage > 100 {
+					usage = 100
+				}
+				return usage
+			}
+		}
+	}
+	
+	// Fallback: use df -h for root partition only
+	cmd = exec.Command("df", "-h", "/")
+	output, err = cmd.Output()
+	if err == nil {
+		lines := strings.Split(string(output), "\n")
+		if len(lines) > 1 {
+			fields := strings.Fields(lines[1])
+			if len(fields) >= 5 {
+				var used float64
+				if _, err := fmt.Sscanf(fields[4], "%f%%", &used); err == nil {
+					return used
+				}
+			}
+		}
+	}
+	return 0.0
+}
+
+// Get system uptime from /proc/uptime (system uptime, not process uptime)
+func getSystemUptime() int64 {
+	// Use gopsutil for cross-platform support
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		uptime, err := host.Uptime()
+		if err == nil {
+			return int64(uptime)
+		}
+		// Fallback: use process uptime
+		return int64(time.Since(startTime).Seconds())
+	}
+	
+	// Try to read from /proc/uptime (Linux)
+	data, err := ioutil.ReadFile("/proc/uptime")
+	if err == nil {
+		// Format: "12345.67 1234.56" (uptime in seconds, idle time)
+		fields := strings.Fields(string(data))
+		if len(fields) > 0 {
+			var uptimeSeconds float64
+			if _, err := fmt.Sscanf(fields[0], "%f", &uptimeSeconds); err == nil {
+				return int64(uptimeSeconds)
+			}
+		}
+	}
+	
+	// Fallback: use process uptime if /proc/uptime is not available
+	return int64(time.Since(startTime).Seconds())
+}
+
+// Network stats tracking
+var (
+	lastNetStats     map[string]netInterfaceStats
+	lastNetStatsTime time.Time
+	netStatsMutex    sync.Mutex
+)
+
+type netInterfaceStats struct {
+	RxBytes uint64
+	TxBytes uint64
+}
+
+func getNetworkStats() (inMBps, outMBps float64, totalRxBytes, totalTxBytes uint64) {
+	netStatsMutex.Lock()
+	defer netStatsMutex.Unlock()
+	
+	// Use gopsutil for cross-platform support
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		// Get network I/O statistics
+		ioStats, err := netutil.IOCounters(true)
+		if err != nil {
+			return 0.0, 0.0, 0, 0
+		}
+		
+		// Sum up all interfaces (excluding loopback)
+		for _, stat := range ioStats {
+			if stat.Name != "lo" && !strings.HasPrefix(stat.Name, "Loopback") {
+				totalRxBytes += stat.BytesRecv
+				totalTxBytes += stat.BytesSent
+			}
+		}
+		
+		now := time.Now()
+		
+		// Calculate rate if we have previous stats
+		if lastNetStats != nil && !lastNetStatsTime.IsZero() {
+			elapsed := now.Sub(lastNetStatsTime).Seconds()
+			if elapsed > 0 {
+				var prevRxBytes, prevTxBytes uint64
+				for _, stats := range lastNetStats {
+					prevRxBytes += stats.RxBytes
+					prevTxBytes += stats.TxBytes
+				}
+				
+				rxDiff := float64(totalRxBytes) - float64(prevRxBytes)
+				txDiff := float64(totalTxBytes) - float64(prevTxBytes)
+				
+				// Handle counter wrap-around
+				if rxDiff < 0 {
+					rxDiff = float64(totalRxBytes)
+				}
+				if txDiff < 0 {
+					txDiff = float64(totalTxBytes)
+				}
+				
+				inMBps = (rxDiff / elapsed) / (1024 * 1024)
+				outMBps = (txDiff / elapsed) / (1024 * 1024)
+			}
+		}
+		
+		// Update last stats (convert to our format)
+		currentStats := make(map[string]netInterfaceStats)
+		for _, stat := range ioStats {
+			if stat.Name != "lo" && !strings.HasPrefix(stat.Name, "Loopback") {
+				currentStats[stat.Name] = netInterfaceStats{
+					RxBytes: stat.BytesRecv,
+					TxBytes: stat.BytesSent,
+				}
+			}
+		}
+		lastNetStats = currentStats
+		lastNetStatsTime = now
+		
+		return inMBps, outMBps, totalRxBytes, totalTxBytes
+	}
+	
+	// Read current network stats from /proc/net/dev (Linux)
+	currentStats := make(map[string]netInterfaceStats)
+	data, err := ioutil.ReadFile("/proc/net/dev")
+	if err != nil {
+		return 0.0, 0.0, 0, 0
+	}
+	
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		// Skip header lines
+		if !strings.Contains(line, ":") {
+			continue
+		}
+		
+		// Parse line: "eth0: 123456 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
+		// Format: interface: rx_bytes rx_packets ... tx_bytes tx_packets ...
+		parts := strings.Split(line, ":")
+		if len(parts) != 2 {
+			continue
+		}
+		
+		interfaceName := strings.TrimSpace(parts[0])
+		// Skip loopback interface
+		if interfaceName == "lo" {
+			continue
+		}
+		
+		fields := strings.Fields(parts[1])
+		if len(fields) < 16 {
+			continue
+		}
+		
+		var rxBytes, txBytes uint64
+		fmt.Sscanf(fields[0], "%d", &rxBytes)  // Receive bytes
+		fmt.Sscanf(fields[8], "%d", &txBytes)  // Transmit bytes
+		
+		currentStats[interfaceName] = netInterfaceStats{
+			RxBytes: rxBytes,
+			TxBytes: txBytes,
+		}
+	}
+	
+	// Calculate total bytes across all interfaces
+	// Note: totalRxBytes and totalTxBytes are already declared as named return values
+	for _, stats := range currentStats {
+		totalRxBytes += stats.RxBytes
+		totalTxBytes += stats.TxBytes
+	}
+	
+	now := time.Now()
+	
+	// If we have previous stats, calculate rate
+	if lastNetStats != nil && !lastNetStatsTime.IsZero() {
+		elapsed := now.Sub(lastNetStatsTime).Seconds()
+		if elapsed > 0 {
+			// Calculate previous total
+			var prevRxBytes, prevTxBytes uint64
+			for _, stats := range lastNetStats {
+				prevRxBytes += stats.RxBytes
+				prevTxBytes += stats.TxBytes
+			}
+			
+			// Calculate rate (bytes per second to MB per second)
+			rxDiff := float64(totalRxBytes) - float64(prevRxBytes)
+			txDiff := float64(totalTxBytes) - float64(prevTxBytes)
+			
+			// Handle counter wrap-around (uint64 can wrap)
+			if rxDiff < 0 {
+				rxDiff = float64(totalRxBytes) // Assume wrap-around, use current value
+			}
+			if txDiff < 0 {
+				txDiff = float64(totalTxBytes) // Assume wrap-around, use current value
+			}
+			
+			inMBps = (rxDiff / elapsed) / (1024 * 1024)  // Convert bytes/s to MB/s
+			outMBps = (txDiff / elapsed) / (1024 * 1024) // Convert bytes/s to MB/s
+		}
+	}
+	
+	// Update last stats
+	lastNetStats = currentStats
+	lastNetStatsTime = now
+	
+	return inMBps, outMBps, totalRxBytes, totalTxBytes
+}
+
+// Get CPU model information in format: "Model @ SpeedGHz Count Core"
+func getCPUModel() string {
+	// Check cache first (only for performance, not as fallback)
+	cacheMutex.RLock()
+	if cpuModelCache != "" && time.Since(cpuModelCacheTime) < cacheTTL {
+		cached := cpuModelCache
+		cacheMutex.RUnlock()
+		return cached
+	}
+	cacheMutex.RUnlock()
+	
+	var model, coreType string
+	var coreCount int
+	
+	// Use gopsutil for cross-platform support
+	if runtime.GOOS == "windows" {
+		// Windows: Use native WMI command as primary method (faster and more reliable)
+		
+		// Step 1: Get CPU model name
+		cmd := exec.Command("wmic", "cpu", "get", "Name", "/format:list")
+		output, err := cmd.Output()
+		
+		if err == nil && len(output) > 0 {
+			lines := strings.Split(string(output), "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "Name=") {
+					model = strings.TrimPrefix(line, "Name=")
+					model = strings.TrimSpace(model)
+					if model != "" {
+						break
+					}
+				}
+			}
+		}
+		
+		// Step 2: Get SYSTEM total logical processors (not per-CPU)
+		cmd = exec.Command("wmic", "computersystem", "get", "NumberOfLogicalProcessors", "/format:list")
+		output, err = cmd.Output()
+		
+		if err == nil && len(output) > 0 {
+			lines := strings.Split(string(output), "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "NumberOfLogicalProcessors=") {
+					numStr := strings.TrimPrefix(line, "NumberOfLogicalProcessors=")
+					var num int
+					if _, err := fmt.Sscanf(strings.TrimSpace(numStr), "%d", &num); err == nil && num > 0 {
+						coreCount = num
+						break
+					}
+				}
+			}
+		}
+		
+		// Step 3: Get total physical cores (sum from all CPUs)
+		cmd = exec.Command("wmic", "cpu", "get", "NumberOfCores", "/format:list")
+		output, err = cmd.Output()
+		
+		var totalPhysicalCores int
+		if err == nil && len(output) > 0 {
+			lines := strings.Split(string(output), "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "NumberOfCores=") {
+					coresStr := strings.TrimPrefix(line, "NumberOfCores=")
+					var cores int
+					if _, err := fmt.Sscanf(strings.TrimSpace(coresStr), "%d", &cores); err == nil && cores > 0 {
+						totalPhysicalCores += cores
+					}
+				}
+			}
+		}
+		
+		// Determine core type
+		if coreCount > totalPhysicalCores && totalPhysicalCores > 0 {
+			coreType = "Virtual" // Has hyperthreading
+		} else {
+			coreType = "Physical" // Will be corrected if VPS detected
+		}
+		
+		// If WMIC failed, try gopsutil as fallback
+		if model == "" {
+			// WMIC failed, trying gopsutil
+			cpuInfo, err := cpu.Info()
+			if err == nil && len(cpuInfo) > 0 {
+				model = strings.TrimSpace(cpuInfo[0].ModelName)
+				if cpuInfo[0].Cores > 0 {
+					coreCount = int(cpuInfo[0].Cores)
+					logicalCount, _ := cpu.Counts(true)
+					if logicalCount > coreCount {
+						coreCount = logicalCount
+						coreType = "Virtual"
+					} else {
+						coreType = "Physical"
+					}
+				}
+			}
+		}
+		
+		// Final fallback: just core count
+		if model == "" {
+			logicalCount, err := cpu.Counts(true)
+			if err == nil && logicalCount > 0 {
+				return fmt.Sprintf("CPU %d Core", logicalCount)
+			}
+			return ""
+		}
+	} else if runtime.GOOS == "darwin" {
+		// macOS: Use gopsutil
+		cpuInfo, err := cpu.Info()
+		if err != nil {
+			return ""
+		}
+		if len(cpuInfo) == 0 {
+			return ""
+		}
+		model = strings.TrimSpace(cpuInfo[0].ModelName)
+		if model == "" {
+			return ""
+		}
+		
+		// Get CPU cores count
+		if cpuInfo[0].Cores > 0 {
+			coreCount = int(cpuInfo[0].Cores)
+			// Check if hyperthreading is enabled
+			logicalCount, err := cpu.Counts(true)
+			if err == nil && logicalCount > coreCount {
+				coreCount = logicalCount
+				coreType = "Virtual"
+			} else {
+				coreType = "Physical"
+			}
+		} else {
+			// Fallback to logical count
+			logicalCount, err := cpu.Counts(true)
+			if err == nil && logicalCount > 0 {
+				coreCount = logicalCount
+				coreType = "Virtual"
+			}
+		}
+		
+		// If we don't have core type yet, default to Physical (will be corrected below)
+		if coreType == "" {
+			coreType = "Physical"
+		}
+	}
+	
+	// For ALL platforms: Detect virtualization and correct core type
+	// Clear cache to force fresh detection
+	cacheMutex.Lock()
+	virtualizationTypeCache = ""
+	virtualizationTypeCacheTime = time.Time{}
+	cacheMutex.Unlock()
+	
+	virtType := getVirtualizationType()
+	
+	// On VPS, all cores should be marked as Virtual
+	if virtType == "VPS" && coreType == "Physical" {
+		coreType = "Virtual"
+	}
+	
+	// Check if model already contains frequency
+	// Intel CPUs usually have it (e.g., "Intel(R) Xeon(R) @ 2.10GHz")
+	// AMD CPUs usually don't (e.g., "AMD Ryzen 7 5800X")
+	hasFreq := strings.Contains(model, "GHz") || strings.Contains(model, "MHz")
+	var speed string
+	
+	// Get frequency if not in model name (typically AMD CPUs)
+	if !hasFreq && (runtime.GOOS == "windows" || runtime.GOOS == "darwin") {
+		// For Windows/macOS, try to get frequency from gopsutil
+		cpuInfo, err := cpu.Info()
+		if err == nil && len(cpuInfo) > 0 && cpuInfo[0].Mhz > 0 {
+			speed = fmt.Sprintf("%.2f", float64(cpuInfo[0].Mhz)/1000.0)
+		}
+	}
+	
+	// Format output
+	var result string
+	
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		if speed != "" && coreCount > 0 {
+			// Add frequency and core count (for AMD or CPUs without frequency in model)
+			result = fmt.Sprintf("%s @ %sGHz %d %s Core", model, speed, coreCount, coreType)
+		} else if coreCount > 0 {
+			// Just add core count (for Intel or CPUs with frequency in model)
+			result = fmt.Sprintf("%s %d %s Core", model, coreCount, coreType)
+		} else {
+			result = model
+		}
+		
+		// Cache the result
+		cacheMutex.Lock()
+		cpuModelCache = result
+		cpuModelCacheTime = time.Now()
+		cacheMutex.Unlock()
+		
+		return result
+	}
+	
+	// Get CPU model name (Linux)
+	cmd := exec.Command("sh", "-c", "grep -m1 'model name' /proc/cpuinfo | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
+	output, err := cmd.Output()
+	if err == nil {
+		model = strings.TrimSpace(string(output))
+	}
+	
+	// If model not found, try lscpu
+	if model == "" {
+		cmd = exec.Command("sh", "-c", "lscpu | grep 'Model name' | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
+		output, err = cmd.Output()
+		if err == nil {
+			model = strings.TrimSpace(string(output))
+		}
+	}
+	
+	if model == "" {
+		return ""
+	}
+	
+	// Check if model already contains frequency
+	// Intel CPUs usually have it, AMD CPUs usually don't
+	hasFreqLinux := strings.Contains(model, "GHz") || strings.Contains(model, "MHz")
+	var speedLinux string
+	
+	// Get frequency if not in model name (typically AMD CPUs)
+	if !hasFreqLinux {
+		// Get CPU frequency (MHz) and convert to GHz
+		cmd = exec.Command("sh", "-c", "grep -m1 'cpu MHz' /proc/cpuinfo | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
+		output, err = cmd.Output()
+		if err == nil {
+			var mhz float64
+			if _, err := fmt.Sscanf(strings.TrimSpace(string(output)), "%f", &mhz); err == nil && mhz > 0 {
+				speedLinux = fmt.Sprintf("%.2f", mhz/1000.0)
+			}
+		}
+		
+		// If speed not found, try lscpu
+		if speedLinux == "" {
+			cmd = exec.Command("sh", "-c", "lscpu | grep 'CPU MHz' | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
+			output, err = cmd.Output()
+			if err == nil {
+				var mhz float64
+				if _, err := fmt.Sscanf(strings.TrimSpace(string(output)), "%f", &mhz); err == nil && mhz > 0 {
+					speedLinux = fmt.Sprintf("%.2f", mhz/1000.0)
+				}
+			}
+		}
+	}
+	
+	
+	// Check if running in virtualization environment
+	isVirtualized := false
+	cmd = exec.Command("sh", "-c", "lscpu | grep 'Hypervisor vendor'")
+	output, err = cmd.Output()
+	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
+		isVirtualized = true
+	}
+	
+	// Get Thread(s) per core to detect hyperthreading
+	cmd = exec.Command("sh", "-c", "lscpu | grep '^Thread(s) per core:' | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
+	output, err = cmd.Output()
+	threadsPerCore := 1
+	if err == nil {
+		fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &threadsPerCore)
+	}
+	
+	// Get physical cores and virtual cores from lscpu
+	cmd = exec.Command("sh", "-c", "lscpu | grep '^Core(s) per socket:' | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
+	output, err = cmd.Output()
+	physicalCores := 0
+	if err == nil {
+		var sockets, coresPerSocket int
+		fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &coresPerSocket)
+		
+		// Get number of sockets
+		cmd = exec.Command("sh", "-c", "lscpu | grep '^Socket(s):' | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
+		output, err = cmd.Output()
+		if err == nil {
+			fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &sockets)
+	}
+		
+		physicalCores = sockets * coresPerSocket
+	}
+	
+	// Get total CPU count (virtual cores)
+	cmd = exec.Command("sh", "-c", "lscpu | grep '^CPU(s):' | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
+	output, err = cmd.Output()
+	virtualCores := 0
+	if err == nil {
+		fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &virtualCores)
+	}
+	
+	// Determine core type and count
+	// Priority: Check for virtualization, hyperthreading, or virtual != physical
+	if isVirtualized {
+		// Running in virtualized environment - always use virtual cores
+		coreCount = virtualCores
+		coreType = "Virtual"
+	} else if threadsPerCore > 1 {
+		// Has hyperthreading - use virtual cores
+		coreCount = virtualCores
+		coreType = "Virtual"
+	} else if virtualCores > 0 && physicalCores > 0 && virtualCores != physicalCores {
+		// Virtual cores != physical cores - use virtual cores
+		coreCount = virtualCores
+		coreType = "Virtual"
+	} else if virtualCores > 0 && physicalCores > 0 && virtualCores == physicalCores {
+		// Same count - use physical cores (real hardware, no hyperthreading)
+		coreCount = physicalCores
+		coreType = "Physical"
+	} else if physicalCores > 0 {
+		// Only physical cores available
+		coreCount = physicalCores
+		coreType = "Physical"
+	} else if virtualCores > 0 {
+		// Fallback to virtual cores if physical not available
+		coreCount = virtualCores
+		coreType = "Virtual"
+	} else {
+		// Last resort: count from /proc/cpuinfo
+		cmd = exec.Command("sh", "-c", "grep -c '^processor' /proc/cpuinfo")
+		output, err = cmd.Output()
+		if err == nil {
+			fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &coreCount)
+			coreType = "Virtual"
+		}
+	}
+	
+	// Format output
+	// Add frequency if not already in model name (AMD CPUs)
+	if speedLinux != "" && coreCount > 0 {
+		return fmt.Sprintf("%s @ %sGHz %d %s Core", model, speedLinux, coreCount, coreType)
+	} else if coreCount > 0 {
+		return fmt.Sprintf("%s %d %s Core", model, coreCount, coreType)
+	}
+	
+	return model
+}
+
+// Get virtualization type: "VPS" (Virtual Private Server) or "DS" (Dedicated Server)
+func getVirtualizationType() string {
+	// Check cache first (only for performance)
+	cacheMutex.RLock()
+	if virtualizationTypeCache != "" && time.Since(virtualizationTypeCacheTime) < cacheTTL {
+		cached := virtualizationTypeCache
+		cacheMutex.RUnlock()
+		return cached
+	}
+	cacheMutex.RUnlock()
+	
+	// Use gopsutil for cross-platform support
+	if runtime.GOOS == "windows" {
+		
+		// Method 1: Use systeminfo command (most reliable on Windows)
+		cmd := exec.Command("systeminfo")
+		output, err := cmd.Output()
+		if err == nil {
+			outputStr := strings.ToLower(string(output))
+			
+			// Check for common VM indicators in systeminfo output
+			vmIndicators := []string{
+				"vmware", "virtualbox", "hyper-v", "xen", "kvm", 
+				"qemu", "virtual machine", "virtualization", "parallels",
+			}
+			
+			for _, indicator := range vmIndicators {
+				if strings.Contains(outputStr, indicator) {
+					result := "VPS"
+					cacheMutex.Lock()
+					virtualizationTypeCache = result
+					virtualizationTypeCacheTime = time.Now()
+					cacheMutex.Unlock()
+					return result
+				}
+			}
+		}
+		
+		// Method 2: Check BIOS using WMIC
+		cmd = exec.Command("wmic", "bios", "get", "manufacturer,serialnumber", "/format:csv")
+		output, err = cmd.Output()
+		if err == nil {
+			outputStr := strings.ToLower(string(output))
+			vmIndicators := []string{"vmware", "virtualbox", "hyper-v", "xen", "qemu", "innotek", "parallels"}
+			for _, indicator := range vmIndicators {
+				if strings.Contains(outputStr, indicator) {
+					result := "VPS"
+					cacheMutex.Lock()
+					virtualizationTypeCache = result
+					virtualizationTypeCacheTime = time.Now()
+					cacheMutex.Unlock()
+					return result
+				}
+			}
+		}
+		
+		// Method 3: Check ComputerSystem manufacturer
+		cmd = exec.Command("wmic", "computersystem", "get", "manufacturer,model", "/format:csv")
+		output, err = cmd.Output()
+		if err == nil {
+			outputStr := strings.ToLower(string(output))
+			vmIndicators := []string{"vmware", "virtualbox", "microsoft corporation", "xen", "qemu", "innotek", "parallels"}
+			for _, indicator := range vmIndicators {
+				if strings.Contains(outputStr, indicator) {
+					result := "VPS"
+					cacheMutex.Lock()
+					virtualizationTypeCache = result
+					virtualizationTypeCacheTime = time.Now()
+					cacheMutex.Unlock()
+					return result
+				}
+			}
+		}
+		
+		// No virtualization detected
+		result := "DS"
+		cacheMutex.Lock()
+		virtualizationTypeCache = result
+		virtualizationTypeCacheTime = time.Now()
+		cacheMutex.Unlock()
+		return result
+	} else if runtime.GOOS == "darwin" {
+		// macOS: use gopsutil
+		cpuInfo, err := cpu.Info()
+		if err == nil && len(cpuInfo) > 0 {
+			for _, info := range cpuInfo {
+				for _, flag := range info.Flags {
+					if strings.ToLower(flag) == "hypervisor" {
+						result := "VPS"
+						cacheMutex.Lock()
+						virtualizationTypeCache = result
+						virtualizationTypeCacheTime = time.Now()
+						cacheMutex.Unlock()
+						return result
+					}
+				}
+			}
+		}
+		
+		hostInfo, err := host.Info()
+		if err == nil {
+			if hostInfo.VirtualizationSystem != "" && hostInfo.VirtualizationSystem != "none" {
+				result := "VPS"
+				cacheMutex.Lock()
+				virtualizationTypeCache = result
+				virtualizationTypeCacheTime = time.Now()
+				cacheMutex.Unlock()
+				return result
+			}
+		}
+		
+		result := "DS"
+		cacheMutex.Lock()
+		virtualizationTypeCache = result
+		virtualizationTypeCacheTime = time.Now()
+		cacheMutex.Unlock()
+		return result
+	}
+	
+	// Check for hypervisor vendor (most reliable method) - Linux
+	cmd := exec.Command("sh", "-c", "lscpu | grep 'Hypervisor vendor' | cut -d':' -f2 | sed 's/^[[:space:]]*//'")
+	output, err := cmd.Output()
+	if err == nil {
+		hypervisor := strings.TrimSpace(string(output))
+		if hypervisor != "" {
+			// Has hypervisor - it's a VPS
+			result := "VPS"
+			cacheMutex.Lock()
+			virtualizationTypeCache = result
+			virtualizationTypeCacheTime = time.Now()
+			cacheMutex.Unlock()
+			return result
+		}
+	}
+	
+	// Check /proc/cpuinfo for virtualization flags
+	cmd = exec.Command("sh", "-c", "grep -E 'hypervisor|vmx|svm' /proc/cpuinfo | head -1")
+	output, err = cmd.Output()
+	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
+		// Found virtualization flags - it's a VPS
+		result := "VPS"
+		cacheMutex.Lock()
+		virtualizationTypeCache = result
+		virtualizationTypeCacheTime = time.Now()
+		cacheMutex.Unlock()
+		return result
+	}
+	
+	// Check systemd-detect-virt if available
+	cmd = exec.Command("systemd-detect-virt")
+	output, err = cmd.Output()
+	if err == nil {
+		virtType := strings.TrimSpace(string(output))
+		if virtType != "" && virtType != "none" {
+			// Detected virtualization - it's a VPS
+			result := "VPS"
+			cacheMutex.Lock()
+			virtualizationTypeCache = result
+			virtualizationTypeCacheTime = time.Now()
+			cacheMutex.Unlock()
+			return result
+		}
+	}
+	
+	// Check /sys/class/dmi/id/product_name for common VPS indicators
+	cmd = exec.Command("sh", "-c", "cat /sys/class/dmi/id/product_name 2>/dev/null | tr '[:upper:]' '[:lower:]'")
+	output, err = cmd.Output()
+	if err == nil {
+		productName := strings.ToLower(strings.TrimSpace(string(output)))
+		// Common VPS product names
+		vpsIndicators := []string{"vmware", "virtualbox", "kvm", "qemu", "xen", "hyper-v", "parallels", "vps", "cloud"}
+		for _, indicator := range vpsIndicators {
+			if strings.Contains(productName, indicator) {
+				result := "VPS"
+				cacheMutex.Lock()
+				virtualizationTypeCache = result
+				virtualizationTypeCacheTime = time.Now()
+				cacheMutex.Unlock()
+				return result
+			}
+		}
+	}
+	
+	// Check /proc/1/cgroup for container indicators (containers are also VPS-like)
+	cmd = exec.Command("sh", "-c", "grep -q 'docker\\|lxc\\|containerd' /proc/1/cgroup 2>/dev/null")
+	err = cmd.Run()
+	if err == nil {
+		// Running in container - consider as VPS
+		result := "VPS"
+		cacheMutex.Lock()
+		virtualizationTypeCache = result
+		virtualizationTypeCacheTime = time.Now()
+		cacheMutex.Unlock()
+		return result
+	}
+	
+	// If none of the above checks indicate virtualization, assume it's a dedicated server
+	result := "DS"
+	cacheMutex.Lock()
+	virtualizationTypeCache = result
+	virtualizationTypeCacheTime = time.Now()
+	cacheMutex.Unlock()
+	return result
+}
+
+// Get memory information in format "used / total" (e.g., "383.60 MiB / 1.88 GiB")
+func getMemoryInfo() string {
+	// Use gopsutil for cross-platform support
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		vmStat, err := mem.VirtualMemory()
+		if err == nil {
+			usedStr := formatBytes(vmStat.Used)
+			totalStr := formatBytes(vmStat.Total)
+			return fmt.Sprintf("%s / %s", usedStr, totalStr)
+		}
+		return ""
+	}
+	
+	// Read /proc/meminfo for accurate memory info (Linux)
+	data, err := ioutil.ReadFile("/proc/meminfo")
+	if err != nil {
+		// Fallback to free command
+		cmd := exec.Command("sh", "-c", "free -h | grep Mem | awk '{print $3 \"/\" $2}'")
+		output, err := cmd.Output()
+		if err == nil {
+			info := strings.TrimSpace(string(output))
+			if info != "" {
+				parts := strings.Split(info, "/")
+				if len(parts) == 2 {
+					used := strings.TrimSpace(parts[0])
+					total := strings.TrimSpace(parts[1])
+					used = addSpaceBeforeUnit(used)
+					total = addSpaceBeforeUnit(total)
+					return fmt.Sprintf("%s / %s", used, total)
+				}
+				return info
+			}
+		}
+		return ""
+	}
+	
+	// Parse /proc/meminfo
+	var memTotal, memAvailable, memFree, buffers, cached uint64
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		
+		key := strings.TrimSuffix(fields[0], ":")
+		value := fields[1]
+		
+		switch key {
+		case "MemTotal":
+			fmt.Sscanf(value, "%d", &memTotal)
+		case "MemAvailable":
+			fmt.Sscanf(value, "%d", &memAvailable)
+		case "MemFree":
+			fmt.Sscanf(value, "%d", &memFree)
+		case "Buffers":
+			fmt.Sscanf(value, "%d", &buffers)
+		case "Cached":
+			fmt.Sscanf(value, "%d", &cached)
+		}
+	}
+	
+	if memTotal == 0 {
+		return ""
+	}
+	
+	// Calculate used memory (same logic as getMemoryUsage)
+	var memUsed uint64
+	if memAvailable > 0 {
+		memUsed = memTotal - memAvailable
+	} else {
+		memUsed = memTotal - memFree - buffers - cached
+	}
+	
+	// Convert to human-readable format
+	usedStr := formatBytes(memUsed * 1024) // /proc/meminfo is in KB, convert to bytes
+	totalStr := formatBytes(memTotal * 1024)
+	
+	return fmt.Sprintf("%s / %s", usedStr, totalStr)
+}
+
+// Get swap information in format "used / total" (e.g., "75.12 MiB / 975.00 MiB")
+func getSwapInfo() string {
+	// Use gopsutil for cross-platform support
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		// Windows doesn't have swap, but macOS does
+		swapStat, err := mem.SwapMemory()
+		if err == nil {
+			if swapStat.Total > 0 {
+				usedStr := formatBytes(swapStat.Used)
+				totalStr := formatBytes(swapStat.Total)
+				return fmt.Sprintf("%s / %s", usedStr, totalStr)
+			}
+		}
+		// Windows: return empty string (no swap)
+		return ""
+	}
+	
+	// Read /proc/meminfo for accurate swap info (Linux)
+	data, err := ioutil.ReadFile("/proc/meminfo")
+	if err != nil {
+		// Fallback to free command
+		cmd := exec.Command("sh", "-c", "free -h | grep Swap | awk '{print $3 \"/\" $2}'")
+		output, err := cmd.Output()
+		if err == nil {
+			info := strings.TrimSpace(string(output))
+			if info != "" && info != "/" {
+				parts := strings.Split(info, "/")
+				if len(parts) == 2 {
+					used := strings.TrimSpace(parts[0])
+					total := strings.TrimSpace(parts[1])
+					if used == "" {
+						used = "0"
+					}
+					if total == "" {
+						total = "0"
+					}
+					used = addSpaceBeforeUnit(used)
+					total = addSpaceBeforeUnit(total)
+					return fmt.Sprintf("%s / %s", used, total)
+				}
+				return info
+			}
+		}
+		return ""
+	}
+	
+	// Parse /proc/meminfo for swap
+	var swapTotal, swapFree uint64
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		
+		key := strings.TrimSuffix(fields[0], ":")
+		value := fields[1]
+		
+		switch key {
+		case "SwapTotal":
+			fmt.Sscanf(value, "%d", &swapTotal)
+		case "SwapFree":
+			fmt.Sscanf(value, "%d", &swapFree)
+		}
+	}
+	
+	if swapTotal == 0 {
+		return ""
+	}
+	
+	// Calculate used swap
+	swapUsed := swapTotal - swapFree
+	
+	// Convert to human-readable format
+	usedStr := formatBytes(swapUsed * 1024) // /proc/meminfo is in KB, convert to bytes
+	totalStr := formatBytes(swapTotal * 1024)
+	
+	return fmt.Sprintf("%s / %s", usedStr, totalStr)
+}
+
+// Get disk information in format "used / total" (e.g., "9.86 GiB / 18.58 GiB")
+// This function aggregates all mounted filesystems (excluding tmpfs, devtmpfs, squashfs)
+func getDiskInfo() string {
+	// Use gopsutil for cross-platform support
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		// Get all partitions and sum up
+		partitions, err := disk.Partitions(false)
+		if err == nil {
+			var totalSize, totalUsed uint64
+			for _, partition := range partitions {
+				// Skip system reserved partitions on Windows
+				if runtime.GOOS == "windows" {
+					// Only include partitions with drive letters (C:, D:, etc.)
+					if len(partition.Mountpoint) >= 2 && partition.Mountpoint[1] == ':' {
+						usage, err := disk.Usage(partition.Mountpoint)
+						if err == nil && usage.Total > 0 {
+							totalSize += usage.Total
+							totalUsed += usage.Used
+						}
+					}
+				} else {
+					usage, err := disk.Usage(partition.Mountpoint)
+					if err == nil && usage.Total > 0 {
+						totalSize += usage.Total
+						totalUsed += usage.Used
+					}
+				}
+			}
+			if totalSize > 0 {
+				usedStr := formatBytes(totalUsed)
+				totalStr := formatBytes(totalSize)
+				return fmt.Sprintf("%s / %s", usedStr, totalStr)
+			}
+		}
+		return ""
+	}
+	
+	// Get total disk size and used space from all mounted filesystems (Linux)
+	// Use df -B1 to get exact byte values, then convert to human-readable
+	// Use %.0f format to avoid integer overflow in awk (32-bit int max is 2147483647)
+	cmd := exec.Command("sh", "-c", "df -B1 --exclude-type=tmpfs --exclude-type=devtmpfs --exclude-type=squashfs 2>/dev/null | tail -n +2 | awk '{total+=$2; used+=$3} END {if (total>0) printf \"%.0f %.0f\\n\", used+0.0, total+0.0; else print \"0 0\"}'")
+	output, err := cmd.Output()
+	if err == nil {
+		outputStr := strings.TrimSpace(string(output))
+		if outputStr != "" && outputStr != "0 0" {
+			var usedBytes, totalBytes uint64
+			fields := strings.Fields(outputStr)
+			if len(fields) >= 2 {
+				// Parse as uint64 to handle large numbers
+				// First try parsing as float then convert to uint64 to handle scientific notation
+				var usedFloat, totalFloat float64
+				_, err1 := fmt.Sscanf(fields[0], "%f", &usedFloat)
+				_, err2 := fmt.Sscanf(fields[1], "%f", &totalFloat)
+				
+				if err1 == nil && err2 == nil {
+					usedBytes = uint64(usedFloat)
+					totalBytes = uint64(totalFloat)
+					
+					if totalBytes > 0 && usedBytes <= totalBytes {
+						// Convert bytes to human-readable format
+						usedStr := formatBytes(usedBytes)
+						totalStr := formatBytes(totalBytes)
+						return fmt.Sprintf("%s / %s", usedStr, totalStr)
+					}
+				}
+			}
+		}
+	}
+	
+	// Fallback: use df -h for root partition only
+	cmd = exec.Command("sh", "-c", "df -h / | tail -1 | awk '{print $3 \"/\" $2}'")
+	output, err = cmd.Output()
+	if err == nil {
+		info := strings.TrimSpace(string(output))
+		if info != "" {
+			parts := strings.Split(info, "/")
+			if len(parts) == 2 {
+				used := strings.TrimSpace(parts[0])
+				total := strings.TrimSpace(parts[1])
+				// Add space before unit if missing
+				used = addSpaceBeforeUnit(used)
+				total = addSpaceBeforeUnit(total)
+				return fmt.Sprintf("%s / %s", used, total)
+			}
+			return info
+		}
+	}
+	return ""
+}
+
+// formatBytes converts bytes to human-readable format (B, KiB, MiB, GiB, TiB)
+func formatBytes(bytes uint64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := uint64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	value := float64(bytes) / float64(div)
+	units := []string{"KiB", "MiB", "GiB", "TiB", "PiB"}
+	if exp < len(units) {
+		// Format to 2 decimal places, remove trailing zeros
+		formatted := fmt.Sprintf("%.2f", value)
+		formatted = strings.TrimRight(formatted, "0")
+		formatted = strings.TrimRight(formatted, ".")
+		return fmt.Sprintf("%s %s", formatted, units[exp])
+	}
+	return fmt.Sprintf("%.2f EiB", float64(bytes)/float64(div*unit))
+}
+
+// Helper function to add space before unit and normalize to MiB/GiB format
+func addSpaceBeforeUnit(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	
+	// If already has space, normalize units only
+	if strings.Contains(s, " ") {
+		// Normalize: Gi -> GiB, Mi -> MiB, etc. (but avoid double conversion)
+		if strings.HasSuffix(s, " Gi") {
+			return strings.TrimSuffix(s, " Gi") + " GiB"
+		}
+		if strings.HasSuffix(s, " Mi") {
+			return strings.TrimSuffix(s, " Mi") + " MiB"
+		}
+		if strings.HasSuffix(s, " Ki") {
+			return strings.TrimSuffix(s, " Ki") + " KiB"
+		}
+		if strings.HasSuffix(s, " Ti") {
+			return strings.TrimSuffix(s, " Ti") + " TiB"
+		}
+		if strings.HasSuffix(s, " G") && !strings.HasSuffix(s, " GiB") {
+			return strings.TrimSuffix(s, " G") + " GiB"
+		}
+		if strings.HasSuffix(s, " M") && !strings.HasSuffix(s, " MiB") {
+			return strings.TrimSuffix(s, " M") + " MiB"
+		}
+		if strings.HasSuffix(s, " K") && !strings.HasSuffix(s, " KiB") {
+			return strings.TrimSuffix(s, " K") + " KiB"
+		}
+		if strings.HasSuffix(s, " T") && !strings.HasSuffix(s, " TiB") {
+			return strings.TrimSuffix(s, " T") + " TiB"
+		}
+		return s
+	}
+	
+	// No space: find unit and add space, then normalize
+	// Try longer units first (GiB before Gi, Gi before G)
+	units := []struct {
+		old string
+		new string
+	}{
+		{"TiB", " TiB"},
+		{"GiB", " GiB"},
+		{"MiB", " MiB"},
+		{"KiB", " KiB"},
+		{"TB", " TiB"},
+		{"GB", " GiB"},
+		{"MB", " MiB"},
+		{"KB", " KiB"},
+		{"Ti", " TiB"},
+		{"Gi", " GiB"},
+		{"Mi", " MiB"},
+		{"Ki", " KiB"},
+		{"T", " TiB"},
+		{"G", " GiB"},
+		{"M", " MiB"},
+		{"K", " KiB"},
+	}
+	
+	for _, unit := range units {
+		if idx := strings.Index(s, unit.old); idx > 0 {
+			// Insert space before unit and normalize
+			return s[:idx] + unit.new
+		}
+	}
+	return s
+}
+
+func envOr(k, def string) string {
+	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+		return v
+	}
+	return def
+}
+

@@ -1,0 +1,25 @@
+---
+import { Icon as AstroIcon } from 'astro-icon/components';
+
+interface Props {
+  name: string;
+  class?: string;
+  size?: number;
+}
+
+const { name, class: className = '', size = 18 } = Astro.props;
+
+// Check if className contains width/height classes (responsive or fixed)
+// If it does, don't set fixed width/height attributes to allow CSS classes to control size
+const hasSizeClasses = className && (
+  className.includes('w-') || 
+  className.includes('h-') || 
+  className.includes('size-')
+);
+
+// Only set width/height if no size classes are provided
+const width = hasSizeClasses ? undefined : size;
+const height = hasSizeClasses ? undefined : size;
+---
+
+<AstroIcon name={`lucide:${name}`} class={className} width={width} height={height} />

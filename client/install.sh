@@ -1,0 +1,214 @@
+#!/bin/bash
+#
+# Pulse Client Installation Script for Linux
+# Usage: curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh | bash -s -- --id YOUR_ID --server http://YOUR_SERVER:8080
+#
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Default values
+INSTALL_DIR="/opt/pulse"
+SERVICE_NAME="pulse-client"
+GITHUB_REPO="https://github.com/xhhcn/Pulse/raw/main/client"
+CLIENT_PORT="9090"
+AGENT_NAME=""
+
+# Print banner
+print_banner() {
+    echo -e "${BLUE}"
+    echo "╔═══════════════════════════════════════════════════════════╗"
+    echo "║                  Pulse Client Installer                   ║"
+    echo "║           Lightweight Server Monitoring Agent             ║"
+    echo "╚═══════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+}
+
+# Print message functions
+info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+
+# Check if running as root
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        error "Please run as root (use sudo)"
+    fi
+}
+
+# Parse arguments
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --id)
+                AGENT_ID="$2"
+                shift 2
+                ;;
+            --name)
+                AGENT_NAME="$2"
+                shift 2
+                ;;
+            --server)
+                SERVER_BASE="$2"
+                shift 2
+                ;;
+            --port)
+                CLIENT_PORT="$2"
+                shift 2
+                ;;
+            --help|-h)
+                show_help
+                exit 0
+                ;;
+            *)
+                error "Unknown option: $1"
+                ;;
+        esac
+    done
+}
+
+# Show help
+show_help() {
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --id ID          Agent ID (required, must match server config)"
+    echo "  --name NAME      Agent display name (optional, defaults to ID)"
+    echo "  --server URL     Server base URL (required, e.g., http://your-server:8080)"
+    echo "  --port PORT      Client port (optional, default: 9090)"
+    echo "  --help, -h       Show this help message"
+    echo ""
+    echo "Example:"
+    echo "  $0 --id my-server-1 --server http://monitor.example.com:8080"
+    echo ""
+    echo "Or using curl:"
+    echo "  curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh | sudo bash -s -- --id my-server-1 --server http://monitor.example.com:8080"
+}
+
+# Prompt for required values if not provided
+prompt_values() {
+    if [ -z "$AGENT_ID" ]; then
+        read -p "Enter Agent ID (must match server config): " AGENT_ID
+        [ -z "$AGENT_ID" ] && error "Agent ID is required"
+    fi
+    
+    if [ -z "$SERVER_BASE" ]; then
+        read -p "Enter Server URL (e.g., http://your-server:8080): " SERVER_BASE
+        [ -z "$SERVER_BASE" ] && error "Server URL is required"
+    fi
+    
+    if [ -z "$AGENT_NAME" ]; then
+        AGENT_NAME="$AGENT_ID"
+    fi
+}
+
+# Detect architecture
+detect_arch() {
+    ARCH=$(uname -m)
+    case $ARCH in
+        x86_64|amd64)
+            BINARY_NAME="probe-client"
+            ;;
+        aarch64|arm64)
+            BINARY_NAME="probe-client-arm64"
+            ;;
+        *)
+            error "Unsupported architecture: $ARCH"
+            ;;
+    esac
+    info "Detected architecture: $ARCH"
+}
+
+# Download binary
+download_binary() {
+    info "Creating installation directory: $INSTALL_DIR"
+    mkdir -p "$INSTALL_DIR"
+    
+    info "Downloading Pulse client..."
+    DOWNLOAD_URL="${GITHUB_REPO}/${BINARY_NAME}"
+    
+    if command -v curl &> /dev/null; then
+        curl -sSL "$DOWNLOAD_URL" -o "$INSTALL_DIR/probe-client" || error "Failed to download binary"
+    elif command -v wget &> /dev/null; then
+        wget -q "$DOWNLOAD_URL" -O "$INSTALL_DIR/probe-client" || error "Failed to download binary"
+    else
+        error "Neither curl nor wget found. Please install one of them."
+    fi
+    
+    chmod +x "$INSTALL_DIR/probe-client"
+    success "Downloaded and installed probe-client"
+}
+
+# Create systemd service
+create_service() {
+    info "Creating systemd service..."
+    
+    cat > /etc/systemd/system/${SERVICE_NAME}.service << EOF
+[Unit]
+Description=Pulse Monitoring Client
+After=network.target
+
+[Service]
+Type=simple
+Environment="AGENT_ID=${AGENT_ID}"
+Environment="AGENT_NAME=${AGENT_NAME}"
+Environment="SERVER_BASE=${SERVER_BASE}"
+Environment="CLIENT_PORT=${CLIENT_PORT}"
+ExecStart=${INSTALL_DIR}/probe-client
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable ${SERVICE_NAME}
+    systemctl start ${SERVICE_NAME}
+    
+    success "Service created and started"
+}
+
+# Show status
+show_status() {
+    echo ""
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}            Pulse Client Installed Successfully!           ${NC}"
+    echo -e "${GREEN}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo "Configuration:"
+    echo "  Agent ID:    $AGENT_ID"
+    echo "  Server:      $SERVER_BASE"
+    echo "  Client Port: $CLIENT_PORT"
+    echo "  Install Dir: $INSTALL_DIR"
+    echo ""
+    echo "Service Commands:"
+    echo "  Check status:   systemctl status ${SERVICE_NAME}"
+    echo "  View logs:      journalctl -u ${SERVICE_NAME} -f"
+    echo "  Restart:        systemctl restart ${SERVICE_NAME}"
+    echo "  Stop:           systemctl stop ${SERVICE_NAME}"
+    echo "  Uninstall:      systemctl stop ${SERVICE_NAME} && systemctl disable ${SERVICE_NAME} && rm -rf ${INSTALL_DIR} /etc/systemd/system/${SERVICE_NAME}.service"
+    echo ""
+}
+
+# Main
+main() {
+    print_banner
+    parse_args "$@"
+    check_root
+    prompt_values
+    detect_arch
+    download_binary
+    create_service
+    show_status
+}
+
+main "$@"
+
