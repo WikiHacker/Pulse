@@ -556,11 +556,20 @@ const pollMs = Number(pollMsProp ?? 5000);
     }, 100);
   }
 
+  // Get color class based on value threshold
+  const getProgressColor = (value, isOffline = false) => {
+    if (isOffline) return 'bg-red-500';
+    if (value >= 90) return 'bg-red-500';
+    if (value >= 80) return 'bg-orange-500';
+    if (value >= 70) return 'bg-amber-500';
+    return 'bg-emerald-500';
+  };
+  
   const progress = (value, warn = false, isOffline = false) => `
     <div class="flex items-center gap-1 sm:gap-1.5 pr-2 sm:pr-3 min-w-0 w-full">
       <span class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] w-8 sm:w-10 shrink-0">${value.toFixed(1)}%</span>
       <div class="relative h-2.5 sm:h-3 flex-1 min-w-[60px] max-w-[100px] sm:max-w-[120px] overflow-hidden rounded-full bg-[#111] dark:bg-[#111] bg-[#e5e5e5]">
-        <div class="absolute inset-y-0 left-0 h-full rounded-full ${isOffline ? 'bg-red-500' : (warn ? 'bg-amber-500' : 'bg-emerald-500')}" style="width:${pct(value)}%"></div>
+        <div class="absolute inset-y-0 left-0 h-full rounded-full transition-all duration-500 ease-out ${getProgressColor(value, isOffline)}" style="width:${pct(value)}%"></div>
     </div>
     </div>
   `;
@@ -919,6 +928,15 @@ const pollMs = Number(pollMsProp ?? 5000);
     
     // Cell 3: CPU - only update if changed (with threshold)
     const cpuChanged = Math.abs(oldItemNormalized.cpu - newItemNormalized.cpu) >= 0.1;
+    // Helper function for dynamic color updates (same logic as getProgressColor)
+    const getDynamicProgressColor = (value, isOffline = false) => {
+      if (isOffline) return 'bg-red-500';
+      if (value >= 90) return 'bg-red-500';
+      if (value >= 80) return 'bg-orange-500';
+      if (value >= 70) return 'bg-amber-500';
+      return 'bg-emerald-500';
+    };
+    
     const cpuStatusChanged = oldItemNormalized.alert !== newItemNormalized.alert;
     if (shouldUpdateAll || cpuChanged || cpuStatusChanged) {
       const cpuCell = cells[3];
@@ -933,8 +951,8 @@ const pollMs = Number(pollMsProp ?? 5000);
         }
         if (progressBar) {
           progressBar.style.width = `${pct(value)}%`;
-          // Offline: red, Online: green
-          progressBar.className = `absolute inset-y-0 left-0 h-full rounded-full ${isOffline ? 'bg-red-500' : 'bg-emerald-500'}`;
+          // Update color based on threshold
+          progressBar.className = `absolute inset-y-0 left-0 h-full rounded-full transition-all duration-500 ease-out ${getDynamicProgressColor(value, isOffline)}`;
         }
       }
     }
@@ -954,8 +972,8 @@ const pollMs = Number(pollMsProp ?? 5000);
         }
         if (progressBar) {
           progressBar.style.width = `${pct(value)}%`;
-          // Offline: red, Online: green
-          progressBar.className = `absolute inset-y-0 left-0 h-full rounded-full ${isOffline ? 'bg-red-500' : 'bg-emerald-500'}`;
+          // Update color based on threshold
+          progressBar.className = `absolute inset-y-0 left-0 h-full rounded-full transition-all duration-500 ease-out ${getDynamicProgressColor(value, isOffline)}`;
         }
       }
     }
@@ -970,14 +988,13 @@ const pollMs = Number(pollMsProp ?? 5000);
         const textSpan = diskCell.querySelector('span.font-medium');
         const progressBar = diskCell.querySelector('div.absolute');
         const value = newItemNormalized.disk;
-        const warn = value > 65 && !isOffline; // Only warn if online
         if (textSpan) {
           textSpan.textContent = `${value.toFixed(1)}%`;
         }
         if (progressBar) {
           progressBar.style.width = `${pct(value)}%`;
-          // Offline: red, Online: warn (amber) or normal (green)
-          progressBar.className = `absolute inset-y-0 left-0 h-full rounded-full ${isOffline ? 'bg-red-500' : (warn ? 'bg-amber-500' : 'bg-emerald-500')}`;
+          // Update color based on threshold
+          progressBar.className = `absolute inset-y-0 left-0 h-full rounded-full transition-all duration-500 ease-out ${getDynamicProgressColor(value, isOffline)}`;
         }
       }
     }
@@ -1342,11 +1359,8 @@ const pollMs = Number(pollMsProp ?? 5000);
     const packetLossCount = totalCount - successCount;
     const packetLossRate = totalCount > 0 ? (packetLossCount / totalCount * 100) : 0;
     
-    // Update statistics display (only for non-incremental updates or when switching targets)
-    // For incremental updates, statistics should remain unchanged to avoid flickering
-    if (!incremental) {
-      updateTCPingStats(systemId, avgLatency, packetLossRate);
-    }
+    // Always update statistics display (including incremental updates)
+    updateTCPingStats(systemId, avgLatency, packetLossRate);
     
     // Check if there's no data - show "No data" state instead of empty chart
     if (sortedData.length === 0) {
@@ -1429,14 +1443,10 @@ const pollMs = Number(pollMsProp ?? 5000);
         const now = new Date();
         const twentyFourHoursAgo = now.getTime() - (24 * 60 * 60 * 1000);
         
-        const oldLength = chart.data.datasets[0].data.length;
-        
         // Filter out data points older than 24 hours
         chart.data.datasets[0].data = chart.data.datasets[0].data.filter(point => {
           return point.x.getTime() >= twentyFourHoursAgo;
         });
-        
-        const newLength = chart.data.datasets[0].data.length;
         
         // Safety check before updating chart
         try {
