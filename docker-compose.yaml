@@ -3,7 +3,7 @@ services:
     image: xhh1128/pulse:latest
     container_name: pulse-monitor
     ports:
-      - "${PORT:-8008}:8008"
+      - "8008:8008"
     volumes:
       - pulse-data:/app/data
     restart: unless-stopped
