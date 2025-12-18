@@ -28,6 +28,8 @@
 
 ### Docker 部署（推荐）
 
+[![Docker](https://img.shields.io/badge/Docker-xhh1128/pulse-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://hub.docker.com/r/xhh1128/pulse)
+
 ```bash
 mkdir pulse && cd pulse
 curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/docker-compose.yaml -o docker-compose.yaml
@@ -35,8 +37,6 @@ docker compose up -d
 ```
 
 访问 `http://YOUR_IP:8008` 查看监控面板
-
-> 💡 **修改端口**: `PORT=9000 docker compose up -d`
 
 ---
 
@@ -81,16 +81,6 @@ powershell -ExecutionPolicy Bypass -Command "& { $env:AgentId='<ID>'; $env:Serve
 | **磁盘** | 使用率、总量 |
 | **网络** | 上传/下载速率 |
 | **系统** | 运行时间、IP、位置 |
-
----
-
-## 🐳 Docker
-
-```bash
-docker pull xhh1128/pulse:latest
-```
-
-**支持架构**: `linux/amd64` `linux/arm64`
 
 ---
 
