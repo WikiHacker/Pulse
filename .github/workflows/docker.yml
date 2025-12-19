@@ -49,3 +49,49 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release v${{ steps.version.outputs.version }}
+          body: |
+            ## 🚀 Release v${{ steps.version.outputs.version }}
+
+            ### ✨ Features & Improvements
+
+            **Connection Stability (LAN-like Experience)**
+            - Server: Increased failure tolerance to 15 (45s), longer timeouts (4s health, 8s poll)
+            - Client: Faster heartbeat (10s), longer timeouts (8s), optimized connection pool
+            - Extended keep-alive to 120s, larger connection pools for stable connection
+
+            **Mobile Fixes**
+            - Fixed Footer: Removed '·' separator on mobile
+            - Fixed mobile table expansion: Single tap now works (touchstart + click handling)
+            - Fixed swap partition display: Shows '0.00 MiB / 0.00 MiB' when empty
+
+            **TCPing Improvements**
+            - All targets displayed simultaneously with color highlighting
+            - Statistics calculated based on selected target
+            - CDN fallback for Chinese networks (unpkg as backup)
+
+            **Client Binaries**
+            - Compiled for Linux (amd64, arm64) and Windows (amd64)
+
+            ### 📦 Docker Images
+            - `xhh1128/pulse:${{ steps.version.outputs.version }}`
+            - `xhh1128/pulse:latest`
+
+            ### 📥 Client Downloads
+            Client binaries are available in the repository: [client/](https://github.com/xhhcn/Pulse/tree/main/client)
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
