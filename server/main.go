@@ -612,8 +612,10 @@ func handleIngestMetric(store *Store, broker *SSEBroker, w http.ResponseWriter, 
 	}
 
 	
-	// Broadcast update to all connected clients
-	if broker != nil {
+	// Only broadcast immediately if this is from admin page (manual add/edit)
+	// Client data updates will be broadcast by the polling loop every 3 seconds
+	// This prevents duplicate broadcasts when client sends data and polling happens simultaneously
+	if broker != nil && !isFromClient {
 		broker.Broadcast(`{"type":"metric_updated","id":"` + metric.ID + `"}`)
 	}
 	

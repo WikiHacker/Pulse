@@ -4,15 +4,13 @@ import SystemTableHeaderRow from './SystemTableHeaderRow.astro';
 import LoadingState from './LoadingState.astro';
 import { Icon as AstroIcon } from 'astro-icon/components';
 
-const { apiBase: apiBaseProp, pollMs: pollMsProp } = Astro.props ?? {};
+const { apiBase: apiBaseProp } = Astro.props ?? {};
 const apiBase = apiBaseProp ?? '';
-const pollMs = Number(pollMsProp ?? 5000);
 ---
 
 <div 
   id="monitor-root"
   data-api-base={apiBase}
-  data-poll-ms={pollMs}
   class="mx-auto mt-2 sm:mt-3 max-w-7xl rounded-xl border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#1c1c1c] dark:bg-[#1c1c1c] bg-white p-2 sm:p-4 md:p-6"
 >
   <SystemTableHeader />
@@ -243,7 +241,6 @@ const pollMs = Number(pollMsProp ?? 5000);
 
   const root = document.getElementById('monitor-root');
   const apiBase = getApiBase(root);
-  const pollMs = Number(root?.dataset.pollMs || '5000');
 
   const body = document.getElementById('systems-body');
   const loadingIndicator = document.getElementById('loading-indicator');
@@ -2535,20 +2532,36 @@ const pollMs = Number(pollMsProp ?? 5000);
 
   // Debounce loadData to prevent duplicate updates
   let loadDataTimeout = null;
+  let isLoadDataRunning = false; // Flag to prevent concurrent loadData calls
   const debouncedLoadData = () => {
+    // If loadData is already running, skip this call
+    if (isLoadDataRunning) {
+      return;
+    }
+    
     if (loadDataTimeout) {
       clearTimeout(loadDataTimeout);
     }
-    loadDataTimeout = setTimeout(() => {
-      loadData();
-      loadDataTimeout = null;
-    }, 100); // 100ms debounce - prevents rapid consecutive calls
+    loadDataTimeout = setTimeout(async () => {
+      if (isLoadDataRunning) {
+        return; // Double check before executing
+      }
+      isLoadDataRunning = true;
+      try {
+        await loadData();
+      } finally {
+        isLoadDataRunning = false;
+        loadDataTimeout = null;
+      }
+    }, 200); // 200ms debounce - prevents rapid consecutive calls
   };
 
   // Connect to SSE for real-time updates
   function connectSSE() {
+    // Close existing connection and remove all event listeners
     if (eventSource) {
       eventSource.close();
+      eventSource = null;
     }
 
     eventSource = new EventSource(`${apiBase}/api/events`);
@@ -2557,55 +2570,65 @@ const pollMs = Number(pollMsProp ?? 5000);
       // Connected to update stream
     });
 
-      eventSource.addEventListener('update', (e) => {
-        try {
-          const update = JSON.parse(e.data);
+    // Store the handler function so we can remove it if needed
+    const updateHandler = (e) => {
+      try {
+        const update = JSON.parse(e.data);
+        
+        // Reload data when any update is received (incremental update will handle changes)
+        if (update.type === 'metric_updated' || update.type === 'order_updated' || update.type === 'metric_deleted') {
+          // Use debounced loadData to prevent duplicate updates from rapid SSE events
+          debouncedLoadData();
           
-          // Reload data when any update is received (incremental update will handle changes)
-          if (update.type === 'metric_updated' || update.type === 'order_updated' || update.type === 'metric_deleted') {
-            // Use debounced loadData to prevent duplicate updates from rapid SSE events
-            debouncedLoadData();
-            
-            // Update tcping charts for visible expanded rows (incremental update only)
-            document.querySelectorAll('.system-details:not(.hidden)').forEach(detailsSection => {
-              const systemId = detailsSection.dataset.detailsId;
-              if (systemId) {
-                // Use incremental update for all targets chart
-                updateTCPingChart(systemId, null, null, true);
-              }
-            });
+          // Update tcping charts for visible expanded rows (incremental update only)
+          document.querySelectorAll('.system-details:not(.hidden)').forEach(detailsSection => {
+            const systemId = detailsSection.dataset.detailsId;
+            if (systemId) {
+              // Use incremental update for all targets chart
+              updateTCPingChart(systemId, null, null, true);
+            }
+          });
+        }
+      } catch (err) {
+        // SSE parse error silently
       }
-    } catch (err) {
-      // SSE parse error silently
-    }
-      });
+    };
+    
+    eventSource.addEventListener('update', updateHandler);
 
     eventSource.onerror = (err) => {
-      eventSource.close();
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
       // Reconnect after 5 seconds
       setTimeout(connectSSE, 5000);
     };
   }
 
-  // Setup filter input handler
+  // Setup filter input handler - prevent duplicate event listeners
+  let filterInputHandlersSetup = false;
   function setupFilterInput() {
     const filterInput = document.getElementById('system-filter-input');
-    if (!filterInput) return;
+    if (!filterInput || filterInputHandlersSetup) return; // Already setup, skip
 
-    filterInput.addEventListener('input', (e) => {
+    const inputHandler = (e) => {
       currentFilter = e.target.value;
       // Reload data to apply filter
       loadData();
-    });
+    };
 
-    // Also handle Enter key
-    filterInput.addEventListener('keydown', (e) => {
+    const keydownHandler = (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
         currentFilter = e.target.value;
         loadData();
-  }
-    });
+      }
+    };
+
+    filterInput.addEventListener('input', inputHandler);
+    filterInput.addEventListener('keydown', keydownHandler);
+    filterInputHandlersSetup = true;
   }
 
   // Initial load - wait for DOM to be ready
