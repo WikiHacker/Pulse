@@ -112,19 +112,19 @@ func registerWithServer() {
 		
 		data, _ := json.Marshal(payload)
 		
-		// Use a stable HTTP client with optimized connection pooling
+		// Use a stable HTTP client with optimized connection pooling for stable connection
 		httpClient := &http.Client{
-			Timeout: 5 * time.Second,
+			Timeout: 8 * time.Second, // Longer timeout for better reliability
 			Transport: &http.Transport{
 				DialContext: (&net.Dialer{
-					Timeout:   3 * time.Second,
-					KeepAlive: 60 * time.Second, // Longer keep-alive for connection reuse
+					Timeout:   5 * time.Second, // Longer dial timeout
+					KeepAlive: 120 * time.Second, // Longer keep-alive for connection reuse
 				}).DialContext,
-				MaxIdleConns:          10,
-				MaxIdleConnsPerHost:   5,  // Per-host connection limit
-				IdleConnTimeout:       90 * time.Second, // Longer idle timeout
-				TLSHandshakeTimeout:   3 * time.Second,
-				ExpectContinueTimeout: 1 * time.Second,
+				MaxIdleConns:          20, // More idle connections
+				MaxIdleConnsPerHost:   10, // More per-host connections
+				IdleConnTimeout:       180 * time.Second, // Longer idle timeout
+				TLSHandshakeTimeout:   5 * time.Second,
+				ExpectContinueTimeout: 2 * time.Second,
 				DisableCompression:    false, // Enable compression
 			},
 		}
