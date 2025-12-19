@@ -738,10 +738,14 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 	const maxFailures = 30 // Remove from registry after 30 consecutive failures (90 seconds) - very tolerant for cross-continent networks (e.g., Australia-Russia)
 	
 	for {
-		<-ticker.C
+		tickTime := <-ticker.C
 		
 		clients := registry.GetAll()
 		if len(clients) == 0 {
+			// Still broadcast even if no clients to maintain stable interval
+			if broker != nil {
+				broker.Broadcast(`{"type":"metric_updated","count":0}`)
+			}
 			continue
 		}
 		
@@ -819,33 +823,48 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 			close(done)
 		}()
 		
-		// Maximum wait time is 2.8 seconds to ensure we can broadcast before next tick (3s interval)
-		// This gives clients more time to respond while still maintaining 3s update frequency
-		select {
-		case <-done:
-			// All clients responded in time
-		case <-time.After(2800 * time.Millisecond):
-			// Timeout - proceed with whatever updates we have
-			// Slow clients will complete in background and update DB
-			// Their data will be included in next broadcast
-		}
-		
-		// Broadcast all updates at once
-		// Always broadcast every 3 seconds to ensure frontend gets updates even if no data changed
-		// This maintains the 3-second update frequency for all metrics (except TCPing)
-		mu.Lock()
-		count := len(updatedClientIDs)
-		mu.Unlock()
-		
-		// Always broadcast to maintain 3-second update frequency
-		// Frontend will check if data actually changed and update accordingly
-		if broker != nil {
-			broker.Broadcast(`{"type":"metric_updated","count":` + fmt.Sprintf("%d", count) + `}`)
-		}
+		// Wait for polling to complete (with timeout) and then schedule broadcast at fixed time
+		// This ensures broadcasts happen at consistent intervals regardless of polling completion time
+		go func() {
+			// Wait for polling to complete or timeout
+			select {
+			case <-done:
+				// All clients responded in time
+			case <-time.After(2800 * time.Millisecond):
+				// Timeout - proceed with whatever updates we have
+				// Slow clients will complete in background and update DB
+				// Their data will be included in next broadcast
+			}
+			
+			// Calculate time elapsed since tick to ensure stable 3-second intervals
+			elapsed := time.Since(tickTime)
+			remainingTime := 2900*time.Millisecond - elapsed
+			if remainingTime > 0 {
+				// Wait until 2.9 seconds have passed since tick
+				time.Sleep(remainingTime)
+			}
+			// If already past 2.9 seconds, broadcast immediately (shouldn't happen in normal operation)
+			
+			// Broadcast all updates at once
+			// Always broadcast every 3 seconds to ensure frontend gets updates even if no data changed
+			// This maintains the 3-second update frequency for all metrics (except TCPing)
+			mu.Lock()
+			count := len(updatedClientIDs)
+			mu.Unlock()
+			
+			// Always broadcast to maintain 3-second update frequency
+			// Frontend will check if data actually changed and update accordingly
+			if broker != nil {
+				broker.Broadcast(`{"type":"metric_updated","count":` + fmt.Sprintf("%d", count) + `}`)
+			}
+		}()
 	}
 }
 
 // markSystemAsOffline marks a system as offline in the database
+// NOTE: This function does NOT broadcast updates - all updates are handled by the polling loop
+// to maintain a stable 3-second update frequency. The offline status will be included in the
+// next regular broadcast from startClientPolling.
 func markSystemAsOffline(store *Store, broker *SSEBroker, systemID string) {
 	// Safety checks: prevent nil pointer dereference
 	if store == nil || broker == nil || systemID == "" {
@@ -868,10 +887,9 @@ func markSystemAsOffline(store *Store, broker *SSEBroker, systemID string) {
 			return
 		}
 		
-		// Broadcast update to frontend immediately
-		if broker != nil {
-			broker.Broadcast(`{"type":"metric_updated","id":"` + systemID + `"}`)
-		}
+		// DO NOT broadcast here - let the polling loop handle all broadcasts
+		// This ensures stable 3-second update frequency without interruptions
+		// The offline status will be included in the next regular broadcast from startClientPolling
 	}
 }
 
