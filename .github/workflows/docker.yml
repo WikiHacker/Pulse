@@ -16,8 +16,12 @@ jobs:
       contents: write
       packages: write
     
-    # Only run if server files changed (skip if only client, docs, or other files changed)
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history to check file changes
+      
       - name: Check if server files changed
         id: check_changes
         uses: dorny/paths-filter@v2
@@ -32,10 +36,8 @@ jobs:
       - name: Skip if no server changes
         if: steps.check_changes.outputs.server != 'true'
         run: |
-          echo "No server files changed, skipping build"
+          echo "No server files changed, skipping Docker build and release"
           exit 0
-      - name: Checkout
-        uses: actions/checkout@v4
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
