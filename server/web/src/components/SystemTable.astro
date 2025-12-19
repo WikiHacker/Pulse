@@ -1174,19 +1174,32 @@ const pollMs = Number(pollMsProp ?? 5000);
     // Clear existing tabs
     tabsContainer.innerHTML = '';
     
+    // Check if there's a previously selected target for this system
+    const activeTargetInfo = tcpingActiveTargets.get(systemId);
+    const previouslySelectedTarget = activeTargetInfo ? activeTargetInfo.target : null;
+    
     // Create tabs for each target
     config.targets.forEach((target, index) => {
       const tab = document.createElement('button');
-      // No tab is active by default - all tabs start as inactive
-      tab.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-transparent text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] hover:bg-[#404040]/30 dark:hover:bg-[#404040]/30';
+      
+      // Check if this tab should be active (restore previous selection)
+      const isActive = previouslySelectedTarget === target.address;
+      
+      // Set initial state based on previous selection
+      if (isActive) {
+        tab.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-[#404040]/50 dark:bg-[#404040]/50 text-[#f5f5f5] dark:text-[#f5f5f5] text-[#151515]';
+      } else {
+        tab.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-transparent text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] hover:bg-[#404040]/30 dark:hover:bg-[#404040]/30';
+      }
+      
       tab.textContent = target.name || target.address;
       tab.dataset.target = target.address;
       tab.dataset.targetName = target.name || target.address;
 
       tab.addEventListener('click', () => {
         // Check if this tab is already active
-        const activeTargetInfo = tcpingActiveTargets.get(systemId);
-        const isCurrentlyActive = activeTargetInfo && activeTargetInfo.target === target.address;
+        const currentActiveTargetInfo = tcpingActiveTargets.get(systemId);
+        const isCurrentlyActive = currentActiveTargetInfo && currentActiveTargetInfo.target === target.address;
         
         if (isCurrentlyActive) {
           // Clicking the active tab: deselect it and show all targets
@@ -1220,8 +1233,8 @@ const pollMs = Number(pollMsProp ?? 5000);
       tabsContainer.appendChild(tab);
     });
     
-    // Return null to indicate no target is selected by default (all targets shown)
-    return null;
+    // Return the previously selected target (if any) to maintain state
+    return previouslySelectedTarget;
   }
 
   // Initialize tcping chart for a system
@@ -1263,12 +1276,21 @@ const pollMs = Number(pollMsProp ?? 5000);
     tcpingConfigs.set(systemId, config);
 
     // Create tabs immediately (no loading delay for tabs)
-    createTCPingTabs(systemId, config, tabsContainer);
+    // This will restore the previously selected target if any
+    const restoredTarget = createTCPingTabs(systemId, config, tabsContainer);
 
-    // Initialize chart with all targets (no target selected by default)
-    // Don't set activeTarget - this means all lines will be colored
-    // Load chart data for all targets asynchronously
-    await updateTCPingChart(systemId, null, null); // null means load all targets, no target selected
+    // Initialize chart with all targets
+    // If there's a restored target, the chart will show single line highlight
+    // Otherwise, all lines will be colored
+    await updateTCPingChart(systemId, null, null); // null means load all targets
+    
+    // If there was a restored target, update chart colors to match the button state
+    if (restoredTarget) {
+      // Small delay to ensure chart is fully initialized
+      setTimeout(() => {
+        updateTCPingChartColors(systemId, restoredTarget);
+      }, 100);
+    }
   }
 
   // Update tcping chart with data for all targets
