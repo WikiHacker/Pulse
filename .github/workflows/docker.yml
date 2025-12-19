@@ -22,22 +22,22 @@ jobs:
         with:
           fetch-depth: 0  # Fetch full history to check file changes
       
-      - name: Check if server files changed
-        id: check_changes
-        uses: dorny/paths-filter@v2
-        with:
-          base: ${{ github.event.before || 'HEAD~1' }}
-          filters: |
-            server:
-              - 'server/**'
-              - 'docker/**'
-              - 'Dockerfile'
-              - '.github/workflows/docker.yml'
-      
-      - name: Skip if no server changes
-        if: steps.check_changes.outputs.server != 'true'
+      - name: Check if server files exist in tag
+        id: check_server_files
         run: |
-          echo "No server files changed, skipping Docker build and release"
+          # Check if server files exist in the tag commit
+          if git ls-tree -r --name-only HEAD | grep -qE '^(server/|docker/|Dockerfile)'; then
+            echo "server_files_exist=true" >> $GITHUB_OUTPUT
+            echo "Server files found in tag"
+          else
+            echo "server_files_exist=false" >> $GITHUB_OUTPUT
+            echo "No server files found in tag"
+          fi
+      
+      - name: Skip if no server files
+        if: steps.check_server_files.outputs.server_files_exist != 'true'
+        run: |
+          echo "No server files in this tag, skipping Docker build and release"
           exit 0
 
       - name: Set up QEMU
