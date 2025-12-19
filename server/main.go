@@ -972,9 +972,10 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 	}
 	
 	// Create request with context for timeout control
-	// Use shorter timeout (8s) to avoid blocking the 3s polling cycle
-	// This ensures we can complete polling within the 2.8s wait window
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second) // Reduced from 20s to 8s to prevent blocking
+	// Use longer timeout (15s) for cross-continent networks (e.g., China to overseas)
+	// This is important for high-latency networks where RTT can be 200-400ms
+	// The polling loop waits up to 2.8s, but slow clients will complete in background
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second) // Increased to 15s for cross-continent networks
 	defer cancel()
 	
 	// Request metrics from client

@@ -59,6 +59,10 @@ var (
 	virtualizationTypeCacheTime time.Time
 	cacheMutex             sync.RWMutex
 	cacheTTL               = 5 * time.Minute // Cache for 5 minutes
+	
+	// Shared HTTP client for connection reuse (important for cross-continent networks)
+	sharedHTTPClient     *http.Client
+	sharedHTTPClientOnce sync.Once
 )
 
 func main() {
@@ -93,10 +97,39 @@ func main() {
 	}
 }
 
+// getSharedHTTPClient returns a shared HTTP client for connection reuse
+// This is critical for cross-continent networks (e.g., China to overseas servers)
+func getSharedHTTPClient() *http.Client {
+	sharedHTTPClientOnce.Do(func() {
+		// Create a shared HTTP client with optimized settings for cross-continent networks
+		// Key optimizations for China to overseas connections:
+		// - Longer timeouts to handle high latency (200-400ms RTT)
+		// - Connection reuse to avoid repeated TCP handshakes
+		// - DNS resolution timeout to handle slow DNS in China
+		sharedHTTPClient = &http.Client{
+			Timeout: 30 * time.Second, // Increased to 30s for high-latency cross-continent networks
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout:   15 * time.Second, // Increased to 15s for slow connections (DNS + TCP)
+					KeepAlive: 120 * time.Second, // Longer keep-alive for connection reuse
+				}).DialContext,
+				MaxIdleConns:          50, // More idle connections for better reuse
+				MaxIdleConnsPerHost:   20, // More per-host connections
+				IdleConnTimeout:       180 * time.Second, // Longer idle timeout
+				TLSHandshakeTimeout:   15 * time.Second, // Increased to 15s for slow TLS (GFW interference)
+				ExpectContinueTimeout: 5 * time.Second,
+				DisableCompression:    false, // Enable compression
+				DisableKeepAlives:     false, // Enable keep-alive (critical for connection reuse)
+			},
+		}
+	})
+	return sharedHTTPClient
+}
+
 // Register client with server
 func registerWithServer() {
 	// Retry registration with exponential backoff - increased for cross-continent networks
-	maxRetries := 10 // Increased from 5 to handle high-latency networks (e.g., Australia-Russia)
+	maxRetries := 10 // Increased from 5 to handle high-latency networks (e.g., China to overseas)
 	for i := 0; i < maxRetries; i++ {
 		time.Sleep(time.Duration(i+1) * time.Second) // Wait before retry
 		
@@ -112,22 +145,8 @@ func registerWithServer() {
 		
 		data, _ := json.Marshal(payload)
 		
-		// Use a stable HTTP client with optimized connection pooling for cross-continent networks
-		httpClient := &http.Client{
-			Timeout: 20 * time.Second, // Increased from 8s to 20s for high-latency networks (e.g., Australia-Russia ~300ms RTT)
-			Transport: &http.Transport{
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second, // Increased from 5s to 10s for slow connections
-					KeepAlive: 120 * time.Second, // Longer keep-alive for connection reuse
-				}).DialContext,
-				MaxIdleConns:          20, // More idle connections
-				MaxIdleConnsPerHost:   10, // More per-host connections
-				IdleConnTimeout:       180 * time.Second, // Longer idle timeout
-				TLSHandshakeTimeout:   10 * time.Second, // Increased from 5s to 10s for slow TLS
-				ExpectContinueTimeout: 5 * time.Second, // Increased from 2s to 5s
-				DisableCompression:    false, // Enable compression
-			},
-		}
+		// Use shared HTTP client for connection reuse (critical for cross-continent networks)
+		httpClient := getSharedHTTPClient()
 		
 		req, err := http.NewRequest("POST", serverBase+"/api/clients/register", strings.NewReader(string(data)))
 		if err != nil {
@@ -146,7 +165,6 @@ func registerWithServer() {
 		defer resp.Body.Close()
 		
 		if resp.StatusCode == http.StatusOK {
-			log.Printf("✅ Registered with server")
 			return
 		}
 	}
@@ -177,23 +195,8 @@ func startPeriodicRegistration() {
 	ticker := time.NewTicker(5 * time.Second) // More frequent heartbeat (5s) for faster recovery and stability
 	defer ticker.Stop()
 	
-	
-	// Reuse HTTP client for efficiency with optimized settings for cross-continent networks
-	httpClient := &http.Client{
-		Timeout: 20 * time.Second, // Increased from 8s to 20s for high-latency networks (e.g., Australia-Russia)
-		Transport: &http.Transport{
-			DialContext: (&net.Dialer{
-				Timeout:   10 * time.Second, // Increased from 5s to 10s for slow connections
-				KeepAlive: 120 * time.Second, // Longer keep-alive for connection reuse
-			}).DialContext,
-			MaxIdleConns:          20, // More idle connections
-			MaxIdleConnsPerHost:   10, // More per-host connections
-			IdleConnTimeout:       180 * time.Second, // Longer idle timeout
-			TLSHandshakeTimeout:   10 * time.Second, // Increased from 5s to 10s for slow TLS
-			ExpectContinueTimeout: 5 * time.Second, // Increased from 2s to 5s
-			DisableKeepAlives:     false, // Enable keep-alive
-		},
-	}
+	// Use shared HTTP client for connection reuse (critical for cross-continent networks)
+	httpClient := getSharedHTTPClient()
 	
 	consecutiveFailures := 0
 	
@@ -218,6 +221,7 @@ func startPeriodicRegistration() {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", "PulseClient/1.0")
 		req.Header.Set("Connection", "keep-alive")
+		req.Header.Set("Accept-Encoding", "gzip, deflate") // Enable compression
 		
 		resp, err := httpClient.Do(req)
 		if err != nil {
