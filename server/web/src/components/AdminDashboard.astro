@@ -686,7 +686,8 @@ const apiBase = apiBaseProp ?? '';
       total_net_in_bytes: Number(item.total_net_in_bytes || 0),
       total_net_out_bytes: Number(item.total_net_out_bytes || 0),
       cpu_model: String(item.cpu_model || ''),
-      order: Number(item.order || 0)
+      order: Number(item.order || 0),
+      tags: Array.isArray(item.tags) ? item.tags : []
     };
       }
 
