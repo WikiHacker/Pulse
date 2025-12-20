@@ -567,12 +567,16 @@ const apiBase = apiBaseProp ?? '';
       form.elements['original-id'].value = system.id;
       form.elements['name'].value = system.name || '';
       
-      // Fill tags input
+      // Fill tags input - system object from data-system should have tags
       const tagsInput = document.getElementById('edit-tags-input');
-      if (tagsInput && system.tags && Array.isArray(system.tags)) {
-        tagsInput.value = system.tags.join(', ');
-      } else if (tagsInput) {
-        tagsInput.value = '';
+      if (tagsInput) {
+        // The system object from data-system attribute should have tags from the original data
+        const tags = system.tags;
+        if (tags && Array.isArray(tags) && tags.length > 0) {
+          tagsInput.value = tags.join(', ');
+        } else {
+          tagsInput.value = '';
+        }
       }
       
       // Open modal with animation
