@@ -1,10 +1,12 @@
 services:
   pulse:
-    image: xhh1128/pulse:test
+    image: xhh1128/pulse:latest
     container_name: pulse-monitor
     ports:
-      - "8008:8008"
+      - 8008:8008
     volumes:
-      # - pulse-data:/app/data
-      - ../pulse-data:/app/data
+      - pulse-data:/app/data
     restart: unless-stopped
+
+volumes:
+  pulse-data:
