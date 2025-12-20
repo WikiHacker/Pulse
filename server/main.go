@@ -421,13 +421,22 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSSE(broker *SSEBroker, w http.ResponseWriter, r *http.Request) {
-	// Set headers for SSE
+	// Set headers for SSE - critical for Cloudflare CDN compatibility
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	// Important for reverse proxy - tells nginx/other proxies not to buffer
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+	// Critical for reverse proxy and Cloudflare - tells proxies not to buffer
 	w.Header().Set("X-Accel-Buffering", "no")
+	// Additional headers for Cloudflare compatibility
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// Flush headers immediately to prevent buffering
+	if flusher, ok := w.(http.Flusher); ok {
+		flusher.Flush()
+	}
 
 	// Subscribe to broker
 	ch := broker.Subscribe()

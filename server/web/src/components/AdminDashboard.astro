@@ -112,7 +112,7 @@ const apiBase = apiBaseProp ?? '';
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="tags">Tags</span> <span class="text-xs text-[#737373] dark:text-[#737373] text-[#a3a3a3]">(comma-separated)</span></label>
+          <label class="mb-1 block text-sm font-medium text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252]"><span data-translate="tags">Tags</span> <span class="text-xs text-[#737373] dark:text-[#737373] text-[#a3a3a3]" data-translate="tagsCommaSeparated">(comma-separated)</span></label>
           <input
             type="text"
             name="tags"
@@ -120,7 +120,7 @@ const apiBase = apiBaseProp ?? '';
             placeholder="Python, R"
             class="w-full rounded-lg border border-[#404040]/50 dark:border-[#404040]/50 border-[#a3a3a3]/50 bg-[#222] dark:bg-[#222] bg-white px-3 py-2 text-sm text-[#262626] dark:text-[#d4d4d4] placeholder-[#737373] dark:placeholder-[#737373] placeholder-[#a3a3a3] outline-none transition-colors focus:border-[#525252] dark:focus:border-[#525252] focus:border-[#737373] focus:bg-[#282828] dark:focus:bg-[#282828] focus:bg-[#fafafa]"
           />
-          <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#a3a3a3]">Enter tags separated by commas (e.g., Python, R, Production)</p>
+          <p class="mt-1 text-xs text-[#737373] dark:text-[#737373] text-[#a3a3a3]" data-translate="tagsHint">Enter tags separated by commas (e.g., Python, R, Production)</p>
         </div>
 
         <div class="rounded-lg bg-[#282828] dark:bg-[#282828] bg-[#f5f5f5] p-3">
@@ -3009,6 +3009,9 @@ const apiBase = apiBaseProp ?? '';
     'systemName': { en: 'Service Name', zh: '服务名称' },
     'displayNameForThisSystem': { en: 'Display name for this system', zh: '此服务的显示名称' },
     'myServer': { en: 'My Server', zh: '我的服务器' },
+    'tags': { en: 'Tags', zh: '标签' },
+    'tagsCommaSeparated': { en: '(comma-separated)', zh: '（逗号分隔）' },
+    'tagsHint': { en: 'Enter tags separated by commas (e.g., Python, R, Production)', zh: '输入标签，用逗号分隔（例如：Python, R, Production）' },
     'cancel': { en: 'Cancel', zh: '取消' },
     'updateSystem': { en: 'Update System', zh: '更新服务' },
     'areYouSureYouWantToDelete': { en: 'Are you sure you want to delete', zh: '您确定要删除' },
