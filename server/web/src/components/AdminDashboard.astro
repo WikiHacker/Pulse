@@ -1605,7 +1605,11 @@ const apiBase = apiBaseProp ?? '';
     const newData = new Map();
     data.forEach(item => {
       const normalized = normalizeItem(item);
-      normalized.original = item; // Keep original for rendering
+      normalized.original = item; // Keep original for rendering (includes tags, secret, etc.)
+      // Also ensure tags are preserved in normalized data for easy access
+      if (normalized.tags === undefined && item.tags) {
+        normalized.tags = Array.isArray(item.tags) ? item.tags : [];
+      }
       newData.set(item.id, normalized);
     });
 
