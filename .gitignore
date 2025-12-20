@@ -41,3 +41,12 @@ data/
 tmp/
 temp/
 *.tmp
+
+# Sensitive files - NEVER commit these
+*recovery-codes*
+*secret*
+*password*
+*.key
+*.pem
+*.p12
+*.pfx
