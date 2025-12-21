@@ -87,7 +87,15 @@ const apiBase = apiBaseProp ?? '';
       cache: 'no-store',
       headers: headers
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      // If 401 Unauthorized, redirect to login page
+      if (res.status === 401) {
+        localStorage.removeItem('admin_auth_token');
+        window.location.href = '/login?redirect=/';
+        throw new Error('Unauthorized - redirecting to login');
+      }
+      throw new Error(`HTTP ${res.status}`);
+    }
     const data = await res.json();
     if (Array.isArray(data)) return data;
     if (data === null) return [];
@@ -1532,6 +1540,8 @@ const apiBase = apiBaseProp ?? '';
     // Create datasets for each target
     const datasets = [];
     let hasAnyData = false;
+    let minTime = null;
+    let maxTime = null;
     
     config.targets.forEach((targetConfig, index) => {
       const historyData = allHistoryData[index];
@@ -1549,6 +1559,15 @@ const apiBase = apiBaseProp ?? '';
     
       if (sortedData.length > 0) {
         hasAnyData = true;
+        // Track min and max time across all datasets for proper x-axis range
+        const firstTime = new Date(sortedData[0].timestamp).getTime();
+        const lastTime = new Date(sortedData[sortedData.length - 1].timestamp).getTime();
+        if (minTime === null || firstTime < minTime) {
+          minTime = firstTime;
+        }
+        if (maxTime === null || lastTime > maxTime) {
+          maxTime = lastTime;
+        }
       }
       
       const chartData = [];
@@ -1685,16 +1704,44 @@ const apiBase = apiBaseProp ?? '';
             hasNewData = true;
           }
           
-          // Remove data older than 24 hours
-          currentDataset.data = currentDataset.data.filter(point => {
-          return point.x.getTime() >= twentyFourHoursAgo;
-        });
+          // Remove data older than 24 hours and ensure data is sorted by time
+          currentDataset.data = currentDataset.data
+            .filter(point => {
+              return point.x.getTime() >= twentyFourHoursAgo;
+            })
+            .sort((a, b) => {
+              return a.x.getTime() - b.x.getTime();
+            });
         }
       });
         
       if (hasNewData) {
         try {
           if (chart && chart.canvas && chart.canvas.parentElement) {
+            // Recalculate time range for all datasets after adding new data
+            let updatedMinTime = null;
+            let updatedMaxTime = null;
+            
+            chart.data.datasets.forEach(dataset => {
+              if (dataset.data && dataset.data.length > 0) {
+                // Data is now sorted, so first and last are min and max
+                const firstTime = dataset.data[0].x.getTime();
+                const lastTime = dataset.data[dataset.data.length - 1].x.getTime();
+                if (updatedMinTime === null || firstTime < updatedMinTime) {
+                  updatedMinTime = firstTime;
+                }
+                if (updatedMaxTime === null || lastTime > updatedMaxTime) {
+                  updatedMaxTime = lastTime;
+                }
+              }
+            });
+            
+            // Update x-axis range if we have valid time range
+            if (updatedMinTime !== null && updatedMaxTime !== null && chart.options.scales && chart.options.scales.x) {
+              chart.options.scales.x.min = updatedMinTime;
+              chart.options.scales.x.max = updatedMaxTime;
+            }
+            
             chart.update('none');
             calculateAndUpdateStats(systemId, selectedTarget);
           }
@@ -1976,7 +2023,7 @@ const apiBase = apiBaseProp ?? '';
             display: false
           },
           tooltip: {
-            mode: 'index',
+            mode: 'x', // Use 'x' mode instead of 'index' to handle datasets with different start times
             intersect: false,
             backgroundColor: tooltipBg,
             titleColor: tooltipTextColor,
@@ -2015,12 +2062,50 @@ const apiBase = apiBaseProp ?? '';
                 return '';
               },
               label: function(context) {
-                const datasetLabel = context.dataset.label || '';
-                const value = context.parsed.y;
-                if (value === null || value === undefined) {
-                  return `${datasetLabel}: Timeout/Failure`;
+                // Helper function to format label
+                const formatLabel = (item) => {
+                  const datasetLabel = item.dataset.label || '';
+                  const value = item.parsed.y;
+                  if (value === null || value === undefined) {
+                    return `${datasetLabel}: Timeout/Failure`;
+                  }
+                  return `${datasetLabel}: ${value.toFixed(2)} ms`;
+                };
+                
+                // Get all tooltip items for the current x position
+                const allTooltipItems = context.chart.tooltip.dataPoints || [];
+                
+                // If no tooltip items or only one item, show it normally
+                if (allTooltipItems.length <= 1) {
+                  return formatLabel(context);
                 }
-                return `${datasetLabel}: ${value.toFixed(2)} ms`;
+                
+                // Get the target address for the current item
+                const currentTargetAddress = context.dataset.targetAddress;
+                
+                // Find the first item with the same target address
+                const firstItemForTarget = allTooltipItems.find(item => 
+                  item.dataset && item.dataset.targetAddress === currentTargetAddress
+                );
+                
+                // If no matching target found, show current item (fallback)
+                if (!firstItemForTarget) {
+                  return formatLabel(context);
+                }
+                
+                // Check if current item is the first one for this target
+                // Compare by datasetIndex and dataIndex for reliable matching
+                const isFirstItem = 
+                  firstItemForTarget.datasetIndex === context.datasetIndex &&
+                  firstItemForTarget.dataIndex === context.dataIndex;
+                
+                // Only show label if this is the first item for this target
+                if (isFirstItem) {
+                  return formatLabel(context);
+                }
+                
+                // Return null to hide this label (duplicate for same target)
+                return null;
               }
             }
           }
@@ -2028,7 +2113,9 @@ const apiBase = apiBaseProp ?? '';
         scales: {
           x: {
             type: 'time', // Use time scale for proper time-based X-axis
-            // Let Chart.js auto-calculate min/max based on actual data points
+            // Set min/max based on all datasets to handle different start times correctly
+            min: minTime !== null ? minTime : undefined,
+            max: maxTime !== null ? maxTime : undefined,
             time: {
               displayFormats: {
                 second: 'HH:mm:ss',
@@ -2053,7 +2140,7 @@ const apiBase = apiBaseProp ?? '';
               display: false, // Hide vertical grid lines (only show horizontal)
               drawOnChartArea: false
             },
-            bounds: 'data' // Fit axis to data range
+            bounds: 'ticks' // Use 'ticks' instead of 'data' to ensure proper tooltip positioning
           },
           y: {
             beginAtZero: true,
@@ -2870,3 +2957,4 @@ const apiBase = apiBaseProp ?? '';
     }
   });
 </script>
+

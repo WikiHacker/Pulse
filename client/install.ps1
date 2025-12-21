@@ -18,6 +18,9 @@
 .PARAMETER ClientPort
     The client port (default: 9090)
 
+.PARAMETER Secret
+    Secret for authentication (optional, if server requires it)
+
 .EXAMPLE
     .\install.ps1 -AgentId "my-server-1" -ServerBase "http://monitor.example.com:8080"
 
@@ -31,6 +34,7 @@ $script:AgentId = $env:AgentId
 $script:AgentName = $env:AgentName
 $script:ServerBase = $env:ServerBase
 $script:ClientPort = if ($env:ClientPort) { $env:ClientPort } else { "9090" }
+$script:Secret = $env:Secret
 
 # Enable TLS 1.2 globally (required for GitHub on older Windows)
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -189,8 +193,13 @@ set AGENT_ID=$($script:AgentId)
 set AGENT_NAME=$($script:AgentName)
 set SERVER_BASE=$($script:ServerBase)
 set CLIENT_PORT=$($script:ClientPort)
-probe-client.exe
 "@
+    
+    if (-not [string]::IsNullOrEmpty($script:Secret)) {
+        $scriptContent += "`nset SECRET=$($script:Secret)"
+    }
+    
+    $scriptContent += "`nprobe-client.exe`n"
     
     $scriptPath = "$InstallDir\start-pulse.bat"
     Set-Content -Path $scriptPath -Value $scriptContent -Encoding ASCII
@@ -240,6 +249,9 @@ function Start-BackgroundProcess {
     $env:AGENT_NAME = $script:AgentName
     $env:SERVER_BASE = $script:ServerBase
     $env:CLIENT_PORT = $script:ClientPort
+    if (-not [string]::IsNullOrEmpty($script:Secret)) {
+        $env:SECRET = $script:Secret
+    }
     
     Start-Process -FilePath "$InstallDir\probe-client.exe" -WorkingDirectory $InstallDir -WindowStyle Hidden
     
@@ -255,8 +267,19 @@ function Show-Status {
     Write-Host ""
     Write-Host "Configuration:"
     Write-Host "  Agent ID:    $($script:AgentId)"
+    if (-not [string]::IsNullOrEmpty($script:AgentName)) {
+        Write-Host "  Agent Name:  $($script:AgentName)"
+    }
     Write-Host "  Server:      $($script:ServerBase)"
-    Write-Host "  Client Port: $($script:ClientPort)"
+    Write-Host "  Client Port:   $($script:ClientPort)"
+    if (-not [string]::IsNullOrEmpty($script:Secret)) {
+        $secretDisplay = if ($script:Secret.Length -ge 4) { 
+            $script:Secret.Substring(0, 4) + "****" 
+        } else { 
+            "****" 
+        }
+        Write-Host "  Secret:      $secretDisplay (hidden)"
+    }
     Write-Host "  Install Dir: $InstallDir"
     Write-Host ""
     Write-Host "Management Commands (run in PowerShell as Administrator):"
