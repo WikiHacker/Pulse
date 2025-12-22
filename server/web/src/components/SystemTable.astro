@@ -28,10 +28,10 @@ const apiBase = apiBaseProp ?? '';
       <!-- 表格主体 -->
       <div id="systems-body" class="divide-y divide-[#404040]/50 dark:divide-[#404040]/50 divide-[#e5e5e5]">
         <LoadingState />
-    </div>
       </div>
     </div>
   </div>
+</div>
 
 <script>
   // Import utility functions (inline for Astro compatibility)
@@ -1308,7 +1308,7 @@ const apiBase = apiBaseProp ?? '';
       const { url: authUrl, headers } = buildAuthOptions(url);
       const res = await fetch(authUrl, { headers });
       if (res.ok) {
-      const data = await res.json();
+        const data = await res.json();
         // Ensure we always return an array
         return Array.isArray(data) ? data : [];
       }
@@ -1363,11 +1363,11 @@ const apiBase = apiBaseProp ?? '';
         } else {
           // Clicking an inactive tab: select it
           // Update all tabs to inactive state
-        tabsContainer.querySelectorAll('button').forEach(btn => {
-          btn.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-transparent text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] hover:bg-[#404040]/30 dark:hover:bg-[#404040]/30';
-        });
+          tabsContainer.querySelectorAll('button').forEach(btn => {
+            btn.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-transparent text-[#a3a3a3] dark:text-[#a3a3a3] text-[#525252] hover:bg-[#404040]/30 dark:hover:bg-[#404040]/30';
+          });
           // Set clicked tab as active
-        tab.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-[#404040]/50 dark:bg-[#404040]/50 text-[#f5f5f5] dark:text-[#f5f5f5] text-[#151515]';
+          tab.className = 'px-3 py-1 text-xs font-medium rounded transition-colors bg-[#404040]/50 dark:bg-[#404040]/50 text-[#f5f5f5] dark:text-[#f5f5f5] text-[#151515]';
         
         // Update current active target for this system
         tcpingActiveTargets.set(systemId, {
@@ -1548,14 +1548,14 @@ const apiBase = apiBaseProp ?? '';
       const safeHistoryData = Array.isArray(historyData) ? historyData : [];
       
       // Filter and sort by timestamp
-    const sortedData = [...safeHistoryData]
-      .filter(result => {
-        const timestamp = new Date(result.timestamp).getTime();
-        return timestamp >= twentyFourHoursAgo;
-      })
-      .sort((a, b) => {
-        return new Date(a.timestamp) - new Date(b.timestamp);
-      });
+      const sortedData = [...safeHistoryData]
+        .filter(result => {
+          const timestamp = new Date(result.timestamp).getTime();
+          return timestamp >= twentyFourHoursAgo;
+        })
+        .sort((a, b) => {
+          return new Date(a.timestamp) - new Date(b.timestamp);
+        });
     
       if (sortedData.length > 0) {
         hasAnyData = true;
@@ -1571,21 +1571,21 @@ const apiBase = apiBaseProp ?? '';
       }
       
       const chartData = [];
-    sortedData.forEach(result => {
-      const timestamp = new Date(result.timestamp);
-      let yValue = null;
-      if (result.latency !== null && result.latency !== undefined) {
-        if (result.latency > PACKET_LOSS_THRESHOLD_MS) {
+      sortedData.forEach(result => {
+        const timestamp = new Date(result.timestamp);
+        let yValue = null;
+        if (result.latency !== null && result.latency !== undefined) {
+          if (result.latency > PACKET_LOSS_THRESHOLD_MS) {
             yValue = null; // Packet loss
-        } else {
-          yValue = result.latency;
+          } else {
+            yValue = result.latency;
+          }
         }
-      }
-      chartData.push({
-        x: timestamp,
-        y: yValue
+        chartData.push({
+          x: timestamp,
+          y: yValue
+        });
       });
-    });
     
       // Determine color based on whether a target is selected
       // If no target is selected (selectedTarget === null), all lines have distinct colors
@@ -1688,13 +1688,13 @@ const apiBase = apiBaseProp ?? '';
           const currentData = currentDataset.data || [];
           
           if (currentData.length > 0) {
-      const lastCurrentDataPoint = currentData[currentData.length - 1];
-      const lastCurrentTime = lastCurrentDataPoint ? lastCurrentDataPoint.x.getTime() : 0;
-      
+            const lastCurrentDataPoint = currentData[currentData.length - 1];
+            const lastCurrentTime = lastCurrentDataPoint ? lastCurrentDataPoint.x.getTime() : 0;
+            
             // Find new data points
             const newDataPoints = newDataset.data.filter(point => point.x.getTime() > lastCurrentTime);
-      
-      if (newDataPoints.length > 0) {
+            
+            if (newDataPoints.length > 0) {
               currentDataset.data.push(...newDataPoints);
               hasNewData = true;
             }
@@ -2858,26 +2858,26 @@ const apiBase = apiBaseProp ?? '';
 
     // Store the handler function so we can remove it if needed
     const updateHandler = (e) => {
-        try {
-          const update = JSON.parse(e.data);
-          
-          // Reload data when any update is received (incremental update will handle changes)
-          if (update.type === 'metric_updated' || update.type === 'order_updated' || update.type === 'metric_deleted') {
+      try {
+        const update = JSON.parse(e.data);
+        
+        // Reload data when any update is received (incremental update will handle changes)
+        if (update.type === 'metric_updated' || update.type === 'order_updated' || update.type === 'metric_deleted') {
           // Use debounced loadData to prevent duplicate updates from rapid SSE events
           debouncedLoadData();
-            
-            // Update tcping charts for visible expanded rows (incremental update only)
-            document.querySelectorAll('.system-details:not(.hidden)').forEach(detailsSection => {
-              const systemId = detailsSection.dataset.detailsId;
-              if (systemId) {
+          
+          // Update tcping charts for visible expanded rows (incremental update only)
+          document.querySelectorAll('.system-details:not(.hidden)').forEach(detailsSection => {
+            const systemId = detailsSection.dataset.detailsId;
+            if (systemId) {
               // Use incremental update for all targets chart
               updateTCPingChart(systemId, null, null, true);
-              }
-            });
-      }
-    } catch (err) {
+            }
+          });
+        }
+      } catch (err) {
         // SSE parse error silently
-    }
+      }
     };
     
     eventSource.addEventListener('update', updateHandler);
@@ -2909,7 +2909,7 @@ const apiBase = apiBaseProp ?? '';
         e.preventDefault();
         currentFilter = e.target.value;
         loadData();
-  }
+      }
     };
 
     filterInput.addEventListener('input', inputHandler);
@@ -2957,4 +2957,3 @@ const apiBase = apiBaseProp ?? '';
     }
   });
 </script>
-

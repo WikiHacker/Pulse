@@ -9,10 +9,11 @@ coverage/
 # Compiled binaries
 *.exe
 server/probe-server
-# Keep client binaries for distribution
-!client/probe-client
-!client/probe-client.exe
-!client/probe-client-arm64
+server/probe-server.exe
+# Client binaries are built by CI/CD and committed to repo for distribution
+client/probe-client
+client/probe-client.exe
+client/probe-client-arm64
 
 # Database and data files
 *.db

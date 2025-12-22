@@ -262,7 +262,6 @@ func (r *ClientRegistry) Remove(id string) {
 	delete(r.clients, id)
 }
 
-
 func main() {
 	log.Println("🚀 Starting Probe Server...")
 
@@ -427,8 +426,8 @@ func main() {
 	addr := ":" + portFromEnv()
 	// Start polling clients every 3 seconds
 	go startClientPolling(store, broker, clientRegistry, ipCache)
-	
-	// Start tcping polling every 5 seconds
+
+	// Start tcping polling with configurable interval
 	go startTCPingPolling(clientRegistry, store)
 	
 	// Start cleanup old tcping data every hour
@@ -746,7 +745,6 @@ func handleIngestMetric(store *Store, broker *SSEBroker, w http.ResponseWriter, 
 		return
 	}
 
-	
 	// Only broadcast immediately if this is from admin page (manual add/edit)
 	// Client data updates will be broadcast by the polling loop every 3 seconds
 	// This prevents duplicate broadcasts when client sends data and polling happens simultaneously
@@ -1258,8 +1256,7 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 	if err := store.Upsert(metric); err != nil {
 		return false
 	}
-	
-	
+
 	// Return true to indicate this client was successfully updated
 	return true
 }
@@ -1465,8 +1462,7 @@ func handleUpdateOrder(store *Store, broker *SSEBroker, w http.ResponseWriter, r
 			continue
 		}
 	}
-	
-	
+
 	// Broadcast order change to all connected clients
 	if broker != nil {
 		broker.Broadcast(`{"type":"order_updated","count":` + fmt.Sprintf("%d", len(payload.Order)) + `}`)
@@ -1575,8 +1571,7 @@ func handleTCPingResult(store *Store, w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to save result", http.StatusInternalServerError)
 		return
 	}
-	
-	
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -1663,7 +1658,7 @@ func handleGetTCPingHistory(store *Store, w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, results)
 }
 
-// Handle set tcping config
+// Handle get navbar config
 func handleGetNavbarConfig(store *Store, w http.ResponseWriter, r *http.Request) {
 	// Navbar config is public (no authentication required)
 	// It's used by the frontend to display custom navbar text and logo
@@ -1905,8 +1900,7 @@ func handleSetTCPingConfig(store *Store, w http.ResponseWriter, r *http.Request)
 		// Delete data for removed targets
 		for oldTarget := range oldTargets {
 			if !newTargets[oldTarget] {
-				if err := store.DeleteTCPingResultsByTarget(oldTarget); err != nil {
-				}
+				_ = store.DeleteTCPingResultsByTarget(oldTarget)
 			}
 		}
 	}
@@ -1935,17 +1929,7 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 	defer ticker.Stop()
 	
 	// Format targets for logging
-	if len(config.Targets) == 0 {
-		// TCPing disabled (no targets)
-	} else {
-		targetsStr := ""
-		for i, t := range config.Targets {
-			if i > 0 {
-				targetsStr += ", "
-			}
-			targetsStr += fmt.Sprintf("%s (%s)", t.Name, t.Address)
-		}
-	}
+	// TCPing disabled if no targets configured
 	
 	// Track current config to detect changes
 	currentInterval := config.IntervalSecs
@@ -2004,13 +1988,6 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 		
 		if targetsChanged {
 			currentTargets = newTargets
-			targetsStr := ""
-			for i, t := range config.Targets {
-				if i > 0 {
-					targetsStr += ", "
-				}
-				targetsStr += fmt.Sprintf("%s (%s)", t.Name, t.Address)
-			}
 		}
 		
 		// Skip if no targets configured
@@ -2090,8 +2067,7 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 					}
 					
 					if err := store.SaveTCPingResult(result); err != nil {
-						// TCPing result save failed
-					} else {
+						// TCPing result save failed, continue silently
 					}
 					
 					// Update SystemMetric with latest tcping data for this target (only if successful)
@@ -2122,8 +2098,7 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 func startTCPingCleanup(store *Store) {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
-	
-	
+
 	for {
 		<-ticker.C
 		_ = store.CleanupOldTCPingResults()

@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+  <a href="README_EN.md">English</a> | <a href="README.md">中文</a>
+</p>
+
+<p align="center">
   <a href="https://github.com/xhhcn/Pulse/releases"><img src="https://img.shields.io/github/v/release/xhhcn/Pulse?style=flat-square&color=blue" alt="Release"></a>
   <a href="https://hub.docker.com/r/xhh1128/pulse"><img src="https://img.shields.io/docker/pulls/xhh1128/pulse?style=flat-square&color=blue" alt="Docker Pulls"></a>
   <a href="https://hub.docker.com/r/xhh1128/pulse"><img src="https://img.shields.io/docker/image-size/xhh1128/pulse/latest?style=flat-square&color=blue" alt="Docker Size"></a>
@@ -30,10 +34,23 @@
 
 [![Docker](https://img.shields.io/badge/Docker-xhh1128/pulse-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://hub.docker.com/r/xhh1128/pulse)
 
+#### 方式一：Docker Compose（推荐）
+
 ```bash
 mkdir pulse && cd pulse
 curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/docker-compose.yaml -o docker-compose.yaml
 docker compose up -d
+```
+
+#### 方式二：Docker Run
+
+```bash
+docker run -d \
+  --name pulse-monitor \
+  -p 8008:8008 \
+  -v $(pwd)/pulse-data:/app/data \
+  --restart unless-stopped \
+  xhh1128/pulse:latest
 ```
 
 访问 `http://YOUR_IP:8008` 查看监控面板
@@ -46,19 +63,22 @@ docker compose up -d
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh | sudo bash -s -- \
-  --id <ID> --server <SERVER_URL>
+  --id <ID> --server <SERVER_URL> --secret <SECRET>
 ```
 
 ### Windows (管理员 PowerShell)
 
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "& { $env:AgentId='<ID>'; $env:ServerBase='<SERVER_URL>'; irm https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.ps1 | iex }"
+powershell -ExecutionPolicy Bypass -Command "& { $env:AgentId='<ID>'; $env:ServerBase='<SERVER_URL>'; $env:Secret='<SECRET>'; irm https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.ps1 | iex }"
 ```
 
 | 参数 | 说明 |
 |------|------|
-| `<ID>` | 服务器唯一标识 |
+| `<ID>` | 服务器唯一标识（在管理后台添加系统时设置） |
 | `<SERVER_URL>` | 服务端地址，如 `http://your-server:8008` |
+| `<SECRET>` | 认证密钥（在管理后台添加系统后自动生成，可在系统详情中查看） |
+
+> **注意**：`--secret` 参数是可选的。如果服务端系统配置了 secret，则必须提供正确的 secret 才能成功注册。
 
 ---
 
@@ -67,8 +87,11 @@ powershell -ExecutionPolicy Bypass -Command "& { $env:AgentId='<ID>'; $env:Serve
 1. 访问 `http://YOUR_IP:8008/admin` 进入管理后台
 2. 首次访问设置管理密码
 3. 点击 **Add System** 添加服务器
-4. 在目标机器上运行客户端安装命令
-5. 数据自动上报，实时显示
+4. 添加系统后，系统会自动生成一个 **Secret**（认证密钥）
+5. 在目标机器上运行客户端安装命令，**必须包含正确的 Secret**
+6. 数据自动上报，实时显示
+
+> **提示**：在管理后台的系统列表中，点击系统右侧的复制按钮可以快速复制包含 Secret 的安装命令。
 
 ---
 
@@ -79,8 +102,17 @@ powershell -ExecutionPolicy Bypass -Command "& { $env:AgentId='<ID>'; $env:Serve
 | **CPU** | 使用率、核心数、型号 |
 | **内存** | 使用率、总量 |
 | **磁盘** | 使用率、总量 |
-| **网络** | 上传/下载速率 |
+| **网络** | 上传/下载速率、TCPing延迟 |
 | **系统** | 运行时间、IP、位置 |
+
+---
+
+## ✨ 新特征
+
+- 私有化模式
+- Logo和名称自定义
+- CPU类型检测
+- 客户端一键部署
 
 ---
 

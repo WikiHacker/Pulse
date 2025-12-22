@@ -334,9 +334,9 @@ const apiBase = apiBaseProp ?? '';
           >
             <span data-translate="changePassword">Change Password</span>
           </button>
-    </div>
+        </div>
       </form>
-  </div>
+    </div>
   </div>
 
   <!-- Navbar Config Modal -->
@@ -856,7 +856,7 @@ const apiBase = apiBaseProp ?? '';
       order: Number(item.order || 0),
       tags: Array.isArray(item.tags) ? item.tags : []
     };
-      }
+  }
 
   // Check if two system objects have changed
   function hasChanged(oldItem, newItem) {
@@ -1648,10 +1648,10 @@ const apiBase = apiBaseProp ?? '';
       // If IPv6 row doesn't exist but we have traffic data, try to find or create placeholder
       if (!ipv6Row && item.total_net_out_bytes && item.total_net_out_bytes > 0) {
         // If we have IPv6 address, container should have been created in IPv6 update block
-        if (item.ipv6 && !ipContainer && rightColForTraffic) {
+        if (item.ipv6 && !ipContainer && nameAndIpContainerForTraffic) {
           // IPv6 exists but container doesn't - should have been created in IPv6 update block
           // Just re-find it
-          ipContainer = rightColForTraffic.querySelector('.ip-info-container');
+          ipContainer = nameAndIpContainerForTraffic.querySelector('.ip-info-container');
           ipv6Row = itemElement.querySelector('.system-ipv6')?.closest('.flex.items-center');
         } else if (item.ipv4 && !item.ipv6 && ipContainer) {
           // We have IPv4 but no IPv6 - find or create IPv6 placeholder row
@@ -2006,14 +2006,14 @@ const apiBase = apiBaseProp ?? '';
       }
     }
 
-      // Setup copy IP buttons
+    // Setup copy IP buttons
     container.querySelectorAll('.copy-ip-btn').forEach(btn => {
       // Remove existing listeners by cloning
       const newBtn = btn.cloneNode(true);
       btn.parentNode.replaceChild(newBtn, btn);
       
       newBtn.addEventListener('click', async (e) => {
-          e.stopPropagation();
+        e.stopPropagation();
         const ip = newBtn.dataset.ip;
         if (!ip) return;
         
@@ -2024,53 +2024,53 @@ const apiBase = apiBaseProp ?? '';
         const success = await copyToClipboard(ip);
         
         if (success) {
-            if (copyIcon && checkIcon) {
-              copyIcon.style.display = 'none';
-              checkIcon.style.display = 'block';
+          if (copyIcon && checkIcon) {
+            copyIcon.style.display = 'none';
+            checkIcon.style.display = 'block';
             newBtn.title = 'Copied!';
-              setTimeout(() => {
-                copyIcon.style.display = 'block';
-                checkIcon.style.display = 'none';
+            setTimeout(() => {
+              copyIcon.style.display = 'block';
+              checkIcon.style.display = 'none';
               newBtn.title = originalTitle;
-              }, 1000);
-            }
+            }, 1000);
+          }
         } else {
           newBtn.title = 'Copy failed';
           setTimeout(() => {
             newBtn.title = originalTitle;
           }, 2000);
-          }
-        });
+        }
       });
+    });
 
-      // Setup edit buttons
+    // Setup edit buttons
     container.querySelectorAll('.edit-btn').forEach(btn => {
       // Remove existing listeners by cloning
       const newBtn = btn.cloneNode(true);
       btn.parentNode.replaceChild(newBtn, btn);
       
       newBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
+        e.stopPropagation();
         const system = JSON.parse(newBtn.dataset.system);
-          openEditModal(system);
-        });
+        openEditModal(system);
       });
+    });
 
-      // Setup delete buttons
+    // Setup delete buttons
     container.querySelectorAll('.delete-btn').forEach(btn => {
       // Remove existing listeners by cloning
       const newBtn = btn.cloneNode(true);
       btn.parentNode.replaceChild(newBtn, btn);
       
       newBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
+        e.stopPropagation();
         const systemId = newBtn.dataset.systemId;
         const systemName = newBtn.dataset.systemName;
-          openDeleteModal(systemId, systemName);
-        });
+        openDeleteModal(systemId, systemName);
       });
+    });
 
-      // Setup copy Linux command buttons
+    // Setup copy Linux command buttons
     container.querySelectorAll('.copy-linux-cmd-btn').forEach(btn => {
       const newBtn = btn.cloneNode(true);
       btn.parentNode.replaceChild(newBtn, btn);
@@ -2719,8 +2719,6 @@ const apiBase = apiBaseProp ?? '';
     });
   }
 
-  // Export data
-
   // Refresh button
   const refreshBtn = document.getElementById('refresh-btn');
   if (refreshBtn) {
@@ -3360,7 +3358,7 @@ const apiBase = apiBaseProp ?? '';
             
             // Check if date is valid
             if (isNaN(expiresDate.getTime())) {
-              console.error('Invalid expiration date:', responseData.config.token_expires);
+              // Invalid expiration date from server
               tokenExpiresInfo.textContent = 'Invalid expiration date';
               tokenExpiresInfo.className = 'mt-1 text-xs text-red-400';
             } else if (responseData.config.token_expired === true) {
