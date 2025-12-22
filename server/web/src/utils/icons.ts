@@ -8,7 +8,7 @@ export async function loadOSIcons(): Promise<void> {
     if (!iconName) continue;
     
     try {
-      const response = await fetch(`https://api.iconify.design/${iconName}.svg?height=20`);
+      const response = await fetch(`https://api.iconify.design/${iconName}.svg?height=10`);
       if (response.ok) {
         const svg = await response.text();
         el.innerHTML = svg;

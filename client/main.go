@@ -743,8 +743,56 @@ func getLocation() string {
 		return strings.TrimSpace(location)
 	}
 	
-	// Try to detect from system timezone or IP (simplified)
-	// In production, use proper geolocation service
+	// Try to detect from IP using ip-api.com (same as server side)
+	ipv4, _ := getIPAddresses()
+	if ipv4 != "" {
+		country := getCountryFromIP(ipv4)
+		if country != "" {
+			return country
+		}
+	}
+	
+	return ""
+}
+
+// Get country from IP address using free IP geolocation API (same as server side)
+func getCountryFromIP(ip string) string {
+	if ip == "" || ip == "127.0.0.1" || strings.HasPrefix(ip, "192.168.") || strings.HasPrefix(ip, "10.") || strings.HasPrefix(ip, "172.") {
+		// Skip private/local IPs
+		return ""
+	}
+	
+	// Use ip-api.com free service (no API key required, 45 requests/minute limit)
+	url := fmt.Sprintf("http://ip-api.com/json/%s?fields=status,country,countryCode", ip)
+	
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+	}
+	
+	resp, err := client.Get(url)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	
+	var result struct {
+		Status      string `json:"status"`
+		Country     string `json:"country"`
+		CountryCode string `json:"countryCode"`
+	}
+	
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return ""
+	}
+	
+	if result.Status == "success" && result.Country != "" {
+		return result.Country
+	}
+	
 	return ""
 }
 

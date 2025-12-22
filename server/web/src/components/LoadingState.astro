@@ -7,18 +7,24 @@
   <!-- Skeleton rows with staggered animation -->
   {[0, 1, 2, 3, 4].map((i) => (
     <div 
-      class="grid grid-cols-[160px_80px_70px_90px_90px_1fr_1fr_1fr] items-center gap-2 sm:gap-3 px-3 sm:px-4 md:px-6 py-2 sm:py-3 border-b border-[#404040]/30 dark:border-[#404040]/30 border-[#e5e5e5]/50 animate-stagger-in"
+      class="grid grid-cols-[160px_90px_90px_90px_90px_1fr_1fr_1fr] items-center gap-2 sm:gap-3 px-3 sm:px-4 md:px-6 py-2 sm:py-3 border-b border-[#404040]/30 dark:border-[#404040]/30 border-[#e5e5e5]/50 animate-stagger-in"
       style={`animation-delay: ${i * 80}ms`}
     >
-      <!-- Name column -->
+      <!-- Name column (Service) -->
       <div class="flex items-center gap-2">
         <div class="h-2 w-2 rounded-full bg-[#333] dark:bg-[#333] bg-[#e5e5e5] animate-skeleton"></div>
         <div class="h-3 w-20 sm:w-24 rounded bg-[#282828] dark:bg-[#282828] bg-[#f0f0f0] animate-shimmer"></div>
       </div>
+      <!-- OS column -->
+      <div class="flex justify-center">
+        <div class="h-2.5 w-2.5 sm:h-[13px] sm:w-[13px] rounded bg-[#282828] dark:bg-[#282828] bg-[#f0f0f0] animate-shimmer"></div>
+      </div>
       <!-- Time column -->
       <div class="h-3 w-12 sm:w-16 rounded bg-[#282828] dark:bg-[#282828] bg-[#f0f0f0] animate-shimmer"></div>
       <!-- Location column -->
-      <div class="h-6 w-6 sm:h-8 sm:w-8 rounded bg-[#282828] dark:bg-[#282828] bg-[#f0f0f0] animate-shimmer"></div>
+      <div class="h-3 w-3 sm:h-4 sm:w-4 rounded bg-[#282828] dark:bg-[#282828] bg-[#f0f0f0] animate-shimmer"></div>
+      <!-- Net column -->
+      <div class="h-3 w-14 sm:w-16 rounded bg-[#282828] dark:bg-[#282828] bg-[#f0f0f0] animate-shimmer"></div>
       <!-- CPU column -->
       <div class="flex items-center gap-1.5 pr-2">
         <div class="h-3 w-8 rounded bg-[#282828] dark:bg-[#282828] bg-[#f0f0f0] animate-shimmer"></div>
@@ -39,12 +45,6 @@
         <div class="h-3 flex-1 max-w-[100px] rounded-full bg-[#222] dark:bg-[#222] bg-[#f0f0f0] overflow-hidden">
           <div class="h-full w-1/2 rounded-full bg-[#333] dark:bg-[#333] bg-[#e0e0e0] animate-skeleton"></div>
         </div>
-      </div>
-      <!-- Net column -->
-      <div class="h-3 w-14 sm:w-16 rounded bg-[#282828] dark:bg-[#282828] bg-[#f0f0f0] animate-shimmer"></div>
-      <!-- OS column -->
-      <div class="flex justify-center">
-        <div class="h-5 w-5 sm:h-6 sm:w-6 rounded bg-[#282828] dark:bg-[#282828] bg-[#f0f0f0] animate-shimmer"></div>
       </div>
     </div>
   ))}

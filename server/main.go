@@ -992,10 +992,12 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 			payload.Location = country
 		} else {
 			// Query and cache
-			country := getCountryFromIP(payload.IPv4)
-			if country != "" {
-				ipCache.Set(payload.IPv4, country)
-				payload.Location = country
+			countryCode := getCountryFromIP(payload.IPv4)
+			if countryCode != "" {
+				// Convert country code to country name
+				countryName := countryCodeToCountryName(countryCode)
+				ipCache.Set(payload.IPv4, countryName)
+				payload.Location = countryName
 			}
 		}
 	} else {
@@ -1073,6 +1075,7 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 }
 
 // Get country from IP address using free IP geolocation API
+// Returns country code (ISO 3166-1 alpha-2) which will be converted to country name
 func getCountryFromIP(ip string) string {
 	if ip == "" || ip == "127.0.0.1" || strings.HasPrefix(ip, "192.168.") || strings.HasPrefix(ip, "10.") || strings.HasPrefix(ip, "172.") {
 		// Skip private/local IPs
@@ -1106,11 +1109,53 @@ func getCountryFromIP(ip string) string {
 		return ""
 	}
 	
-	if result.Status == "success" && result.Country != "" {
-		return result.Country
+	// Return country code (ISO 3166-1 alpha-2) for mapping to country name
+	if result.Status == "success" && result.CountryCode != "" {
+		return strings.ToUpper(result.CountryCode)
 	}
 	
 	return ""
+}
+
+// Country code to country name mapping (ISO 3166-1 alpha-2 to English name)
+var countryCodeToName = map[string]string{
+	"US": "United States", "GB": "United Kingdom", "CA": "Canada", "AU": "Australia",
+	"DE": "Germany", "FR": "France", "IT": "Italy", "ES": "Spain", "NL": "Netherlands",
+	"BE": "Belgium", "CH": "Switzerland", "AT": "Austria", "SE": "Sweden", "NO": "Norway",
+	"DK": "Denmark", "FI": "Finland", "PL": "Poland", "CZ": "Czech Republic", "IE": "Ireland",
+	"PT": "Portugal", "GR": "Greece", "HU": "Hungary", "RO": "Romania", "BG": "Bulgaria",
+	"HR": "Croatia", "SK": "Slovakia", "SI": "Slovenia", "LT": "Lithuania", "LV": "Latvia",
+	"EE": "Estonia", "LU": "Luxembourg", "MT": "Malta", "CY": "Cyprus", "IS": "Iceland",
+	"CN": "China", "JP": "Japan", "KR": "South Korea", "TW": "Taiwan", "HK": "Hong Kong",
+	"SG": "Singapore", "MY": "Malaysia", "TH": "Thailand", "ID": "Indonesia", "PH": "Philippines",
+	"VN": "Vietnam", "IN": "India", "PK": "Pakistan", "BD": "Bangladesh", "LK": "Sri Lanka",
+	"MM": "Myanmar", "KH": "Cambodia", "LA": "Laos", "BN": "Brunei", "MO": "Macau",
+	"RU": "Russia", "UA": "Ukraine", "BY": "Belarus", "KZ": "Kazakhstan", "UZ": "Uzbekistan",
+	"GE": "Georgia", "AM": "Armenia", "AZ": "Azerbaijan", "MD": "Moldova", "TR": "Turkey",
+	"SA": "Saudi Arabia", "AE": "United Arab Emirates", "IL": "Israel", "JO": "Jordan",
+	"LB": "Lebanon", "IQ": "Iraq", "IR": "Iran", "KW": "Kuwait", "QA": "Qatar", "BH": "Bahrain",
+	"OM": "Oman", "YE": "Yemen", "SY": "Syria", "PS": "Palestine", "EG": "Egypt",
+	"ZA": "South Africa", "NG": "Nigeria", "KE": "Kenya", "ET": "Ethiopia", "GH": "Ghana",
+	"TZ": "Tanzania", "UG": "Uganda", "AO": "Angola", "MZ": "Mozambique", "MA": "Morocco",
+	"DZ": "Algeria", "TN": "Tunisia", "LY": "Libya", "SD": "Sudan", "SS": "South Sudan",
+	"BR": "Brazil", "MX": "Mexico", "AR": "Argentina", "CL": "Chile", "CO": "Colombia",
+	"PE": "Peru", "VE": "Venezuela", "EC": "Ecuador", "BO": "Bolivia", "PY": "Paraguay",
+	"UY": "Uruguay", "CR": "Costa Rica", "PA": "Panama", "GT": "Guatemala", "HN": "Honduras",
+	"NI": "Nicaragua", "SV": "El Salvador", "DO": "Dominican Republic", "CU": "Cuba",
+	"JM": "Jamaica", "HT": "Haiti", "NZ": "New Zealand", "FJ": "Fiji", "PG": "Papua New Guinea",
+	"NC": "New Caledonia", "PF": "French Polynesia", "AS": "American Samoa", "GU": "Guam",
+	"MP": "Northern Mariana Islands", "PW": "Palau", "FM": "Micronesia", "MH": "Marshall Islands",
+	"KI": "Kiribati", "TV": "Tuvalu", "NR": "Nauru", "VU": "Vanuatu", "SB": "Solomon Islands",
+	"WS": "Samoa", "TO": "Tonga", "CK": "Cook Islands", "NU": "Niue", "TK": "Tokelau",
+}
+
+// Convert country code to country name
+func countryCodeToCountryName(code string) string {
+	if name, ok := countryCodeToName[code]; ok {
+		return name
+	}
+	// If not found in map, return code as fallback
+	return code
 }
 
 // Extract country from location string

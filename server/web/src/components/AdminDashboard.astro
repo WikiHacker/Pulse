@@ -1872,7 +1872,7 @@ const apiBase = apiBaseProp ?? '';
         e.stopPropagation();
         const systemId = newBtn.dataset.systemId;
         const serverUrl = window.location.origin;
-        const command = `curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.sh | sudo bash -s -- --id ${systemId} --server ${serverUrl}`;
+        const command = `curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/project-c-branding/client/install.sh | sudo bash -s -- --id ${systemId} --server ${serverUrl}`;
         
         const linuxIcon = newBtn.querySelector('.linux-icon');
         const checkIcon = newBtn.querySelector('.check-icon');
@@ -1912,7 +1912,7 @@ const apiBase = apiBaseProp ?? '';
         const systemId = newBtn.dataset.systemId;
         const serverUrl = window.location.origin;
         // Use backtick to escape $env: so PowerShell doesn't expand it prematurely
-        const command = `powershell -ExecutionPolicy Bypass -Command "& { \`$env:AgentId='${systemId}'; \`$env:ServerBase='${serverUrl}'; irm https://raw.githubusercontent.com/xhhcn/Pulse/main/client/install.ps1 | iex }"`;
+        const command = `powershell -ExecutionPolicy Bypass -Command "& { \`$env:AgentId='${systemId}'; \`$env:ServerBase='${serverUrl}'; irm https://raw.githubusercontent.com/xhhcn/Pulse/project-c-branding/client/install.ps1 | iex }"`;
         
         const windowsIcon = newBtn.querySelector('.windows-icon');
         const checkIcon = newBtn.querySelector('.check-icon');
