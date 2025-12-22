@@ -94,33 +94,39 @@ jobs:
           body: |
             ## 🚀 Release v${{ steps.version.outputs.version }}
 
-            ### ✨ Features & Improvements
+            ### ✨ New Features
 
-            **Cross-Continent Network Support**
-            - Server: Increased failure tolerance to 30 (90s), longer timeouts (8s health, 20s poll)
-            - Client: Increased retries to 10, longer timeouts (20s), optimized for high-latency networks
-            - Extended keep-alive to 120s, larger connection pools for stable cross-continent connections
+            **Static Compilation & Compatibility**
+            - Client binaries now use static compilation (CGO_ENABLED=0) for better GLIBC compatibility
+            - Works on older Linux distributions without requiring newer GLIBC versions
+            - Improved cross-platform compatibility
 
-            **Mobile Fixes**
-            - Fixed touch scroll detection: Only taps trigger row expansion, not scrolling
-            - Fixed Footer: Removed '·' separator on mobile
-            - Fixed mobile table expansion: Single tap now works correctly
-            - Fixed swap partition display: Shows '0.00 MiB / 0.00 MiB' when empty
+            **Automated Build System**
+            - GitHub Actions automatically builds and commits client binaries
+            - No manual binary uploads required
+            - Binaries are automatically included in releases
 
-            **TCPing Improvements**
-            - All targets displayed simultaneously with distinct colors by default
-            - Click active tab to deselect and show all targets
-            - Statistics calculated based on selected target
-            - Tooltip shows all targets when none selected, only selected target when one is active
-            - CDN fallback for Chinese networks (unpkg as backup)
+            **Documentation Improvements**
+            - Bilingual README (中文/English) with easy language switching
+            - Updated installation instructions with Docker Run support
+            - Clearer documentation for Secret authentication
 
-            **Flag Icons**
-            - Automatic flag icon generation for all countries
-            - Special handling for Hong Kong: `emojione-v1:flag-for-hong-kong-sar-china`
-            - Proper country name normalization (spaces to hyphens, remove commas)
+            **Code Quality**
+            - Comprehensive code audit and cleanup
+            - Improved code readability and consistency
+            - Removed unnecessary agent name output from installation scripts
 
-            **Client Binaries**
-            - Compiled for Linux (amd64, arm64) and Windows (amd64)
+            ### 📦 Docker Images
+            - `xhh1128/pulse:${{ steps.version.outputs.version }}`
+            - `xhh1128/pulse:latest`
+
+            ### 📥 Client Downloads
+            Client binaries are automatically built and available in the repository: [client/](https://github.com/xhhcn/Pulse/tree/main/client)
+            
+            **Supported Platforms:**
+            - Linux amd64 (statically compiled)
+            - Linux arm64 (statically compiled)
+            - Windows amd64 (statically compiled)
 
             ### 📦 Docker Images
             - `xhh1128/pulse:${{ steps.version.outputs.version }}`
