@@ -42,6 +42,8 @@ curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/docker-compose.yaml
 docker compose up -d
 ```
 
+> **IPv6 Support**: If your server requires IPv6 support, please refer to the [Docker IPv6 Configuration](#docker-ipv6-configuration) section below.
+
 #### Method 2: Docker Run
 
 ```bash
@@ -54,6 +56,94 @@ docker run -d \
 ```
 
 Access `http://YOUR_IP:8008` to view the monitoring dashboard
+
+---
+
+## 🌐 Docker IPv6 Configuration
+
+Pulse supports IPv4/IPv6 dual-stack. If your server requires IPv6 support, please follow these steps:
+
+### Prerequisites
+
+1. **Ensure the host has IPv6 enabled**
+   ```bash
+   # Check if IPv6 is enabled
+   ip -6 addr show
+   
+   # Check if IPv6 forwarding is enabled
+   sysctl net.ipv6.conf.all.forwarding
+   # If output is 0, enable it:
+   sudo sysctl -w net.ipv6.conf.all.forwarding=1
+   
+   # Enable permanently (edit /etc/sysctl.conf)
+   echo "net.ipv6.conf.all.forwarding=1" | sudo tee -a /etc/sysctl.conf
+   ```
+
+2. **Configure Docker Daemon to enable IPv6**
+
+   Edit or create `/etc/docker/daemon.json`:
+   ```json
+   {
+     "ipv6": true,
+     "fixed-cidr-v6": "fd00:dead:beef:c0::/80",
+     "experimental": true,
+     "ip6tables": true
+   }
+   ```
+   
+   > **Note**:
+   > - `ipv6: true` - Globally enable Docker's IPv6 support (**required**)
+   > - `fixed-cidr-v6` - IPv6 subnet range used by Docker (adjust according to your actual situation)
+   > - `experimental: true` - Enable experimental features (required for some IPv6 features)
+   > - `ip6tables: true` - Enable IPv6 iptables support (for network isolation and port mapping)
+   
+   Restart Docker service to apply the configuration:
+   ```bash
+   sudo systemctl restart docker
+   ```
+
+3. **Configure docker-compose.yaml to enable IPv6**
+
+   Configure the network to enable IPv6 in `docker-compose.yaml`:
+   ```yaml
+   services:
+     pulse:
+       image: xhh1128/pulse:latest
+       container_name: pulse-monitor
+       ports:
+         - 8008:8008
+       volumes:
+         - pulse-data:/app/data
+       restart: unless-stopped
+       networks:
+         - pulse-network
+
+   volumes:
+     pulse-data:
+
+   networks:
+     pulse-network:
+       enable_ipv6: true
+       ipam:
+         driver: default
+   ```
+
+4. **Recreate containers**
+
+   ```bash
+   docker compose down
+   docker compose up -d
+   ```
+
+5. **Verify IPv6 configuration**
+
+   ```bash
+   # Check container IPv6 address
+   docker exec pulse-monitor ip -6 addr show
+   
+   # Test IPv6 connectivity (if container has ping6)
+   docker exec pulse-monitor ping6 -c 2 2001:4860:4860::8888
+   ```
 
 ---
 

@@ -127,8 +127,13 @@ type ClientInfo struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Port string `json:"port"`
-	IP   string `json:"ip,omitempty"` // Client IP address
-	URL  string `json:"url"`           // Full URL to client
+	IP   string `json:"ip,omitempty"`   // Client IPv4 address (primary)
+	IPv6 string `json:"ipv6,omitempty"` // Client IPv6 address (fallback)
+	URL  string `json:"url"`            // Full URL to client (IPv4)
+	URL6 string `json:"url6,omitempty"` // Full URL to client (IPv6, fallback)
+	// WorkingURL caches the last successful URL (IPv4 or IPv6) to avoid repeated failures
+	// This is set when a connection succeeds and cleared when both URLs fail
+	WorkingURL string `json:"working_url,omitempty"`
 }
 
 type ClientRegistry struct {
@@ -167,7 +172,23 @@ func NewClientRegistry() *ClientRegistry {
 	}
 }
 
-func (r *ClientRegistry) Register(id, name, port, ip string) {
+// buildURL constructs a proper HTTP URL for an IP address
+// IPv6 addresses must be enclosed in square brackets
+func buildURL(ip, port string) string {
+	if ip == "" {
+		return ""
+	}
+	// Use net.ParseIP to accurately detect IPv6 addresses
+	parsedIP := net.ParseIP(ip)
+	if parsedIP != nil && parsedIP.To4() == nil {
+		// IPv6 address - wrap in square brackets
+		return fmt.Sprintf("http://[%s]:%s", ip, port)
+	}
+	// IPv4 address - use as is
+	return fmt.Sprintf("http://%s:%s", ip, port)
+}
+
+func (r *ClientRegistry) Register(id, name, port, ip, ipv6 string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	
@@ -175,30 +196,112 @@ func (r *ClientRegistry) Register(id, name, port, ip string) {
 	// If a client with this ID already exists, we replace it with the new registration
 	// This is the correct behavior: the latest registration wins (handles client restarts, IP changes, etc.)
 	// Note: We don't check IP/Port differences because clients may change IP addresses (e.g., dynamic IP, VPN, etc.)
-	
-	// Construct client URL - always use IP, never localhost
-	var url string
-	if ip != "" && ip != "127.0.0.1" && ip != "localhost" {
-		url = fmt.Sprintf("http://%s:%s", ip, port)
-	} else {
-		// If IP is invalid, try to get server's own IP
-		serverIP := getServerIP()
-		if serverIP != "" {
-			url = fmt.Sprintf("http://%s:%s", serverIP, port)
-			ip = serverIP
-		} else {
-			// Still register but with warning
-			url = fmt.Sprintf("http://%s:%s", ip, port)
+	// CRITICAL: Strict ID-based isolation - each ID is managed independently
+	// Registering ID=3 only affects ID=3, never touches ID=4, even if they share the same IP
+	// 
+	// However, if another client (different ID) is using the same IP/port combination,
+	// and the new registration is from the same physical machine (same IP/port),
+	// we should remove the old registration to prevent confusion.
+	// This handles the case where a user switches from ID=3 to ID=4 on the same machine.
+	// We only do this if BOTH IP and port match exactly, to avoid false positives.
+	for existingID, existingClient := range r.clients {
+		if existingID != id && existingClient != nil {
+			// Check if existing client uses the exact same IP/port combination
+			// Only remove if both IPv4/IPv6 AND port match exactly
+			exactMatch := false
+			if port == existingClient.Port {
+				// Port matches, check if IPs match exactly
+				if (ip != "" && existingClient.IP != "" && ip == existingClient.IP) ||
+					(ipv6 != "" && existingClient.IPv6 != "" && ipv6 == existingClient.IPv6) {
+					// Exact match: same IP and port - this is likely the same physical machine
+					// Remove the old registration to prevent confusion
+					exactMatch = true
+				}
+			}
+			
+			if exactMatch {
+				// Same physical machine registering with a different ID
+				// Remove the old registration to prevent duplicate polling/TCPing
+				log.Printf("⚠️  Removing client %s (ID=%s) because new client %s is registering from the same IP/port", existingClient.Name, existingID, id)
+				delete(r.clients, existingID)
+			}
 		}
 	}
 	
+	// Construct client URLs - prefer IPv4, fallback to IPv6
+	var url, url6 string
+	
+	// Build IPv4 URL if available (and not localhost/loopback)
+	if ip != "" && ip != "127.0.0.1" && ip != "localhost" && ip != "::1" {
+		url = buildURL(ip, port)
+	}
+	
+	// Build IPv6 URL if available (and not loopback)
+	if ipv6 != "" && ipv6 != "::1" && ipv6 != "localhost" {
+		url6 = buildURL(ipv6, port)
+	}
+	
 	// Register or update the client (one client per ID)
+	// Note: It's OK if both URLs are empty - client might be behind NAT
+	// The client will still be tracked, but polling will fail (which is expected)
+	
+	// Preserve WorkingURL if client already exists
+	// Always preserve WorkingURL unless URLs actually changed, as it represents a working connection
+	existingClient, exists := r.clients[id]
+	workingURL := ""
+	if exists && existingClient != nil {
+		// CRITICAL: Always preserve WorkingURL if it's still valid
+		// WorkingURL represents a known working connection, so we should preserve it whenever possible
+		if existingClient.WorkingURL != "" {
+			// CRITICAL: Always preserve WorkingURL if URLs haven't changed
+			// This is the most important case - if URLs are unchanged, preserve WorkingURL
+			// This ensures that once IPv6 works, we keep using it even after re-registration
+			if existingClient.URL == url && existingClient.URL6 == url6 {
+				// URLs haven't changed at all, always preserve working URL
+				workingURL = existingClient.WorkingURL
+			} else if existingClient.WorkingURL == url || existingClient.WorkingURL == url6 {
+				// Working URL still matches one of the current URLs, preserve it
+				workingURL = existingClient.WorkingURL
+			} else {
+				// URLs have changed, but if WorkingURL is still reachable (matches new URLs), preserve it
+				// This handles cases where IPs change but the working connection is still valid
+				// Double-check: maybe WorkingURL matches one of the new URLs (redundant but safe)
+				if existingClient.WorkingURL == url || existingClient.WorkingURL == url6 {
+					workingURL = existingClient.WorkingURL
+				}
+			}
+		}
+	}
+	
+	// CRITICAL: Before creating new object, double-check existingClient.WorkingURL
+	// This handles the case where pollClient updated WorkingURL after we first checked
+	// Since we're still holding the lock, we can safely check again
+	if exists && existingClient != nil && workingURL == "" && existingClient.WorkingURL != "" {
+		// WorkingURL was set by pollClient after our initial check
+		// Check if it matches one of the current URLs
+		if existingClient.WorkingURL == url || existingClient.WorkingURL == url6 {
+			workingURL = existingClient.WorkingURL
+		} else if existingClient.URL == url && existingClient.URL6 == url6 {
+			// URLs haven't changed, preserve WorkingURL even if it doesn't match current URLs
+			// This is important for IPv6 connections
+			workingURL = existingClient.WorkingURL
+		}
+	}
+	
 	r.clients[id] = &ClientInfo{
-		ID:   id,
-		Name: name,
-		Port: port,
-		IP:   ip,
-		URL:  url,
+		ID:         id,
+		Name:       name,
+		Port:       port,
+		IP:         ip,
+		IPv6:       ipv6,
+		URL:        url,
+		URL6:       url6,
+		WorkingURL: workingURL,
+	}
+	
+	// Log registration details
+	if url == "" && url6 == "" {
+		log.Printf("⚠️  Client %s registered but no valid URL (IPv4=%s, IPv6=%s) - client may be behind NAT", id, ip, ipv6)
 	}
 }
 
@@ -219,6 +322,24 @@ func getServerIP() string {
 	return udpAddr.IP.String()
 }
 
+func (r *ClientRegistry) Get(id string) *ClientInfo {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.clients[id]
+}
+
+// UpdateWorkingURL updates the WorkingURL for a client atomically
+// This ensures that WorkingURL updates from pollClient are preserved even during re-registration
+func (r *ClientRegistry) UpdateWorkingURL(id, workingURL string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if client, exists := r.clients[id]; exists && client != nil {
+		if client.WorkingURL != workingURL {
+			client.WorkingURL = workingURL
+		}
+	}
+}
+
 func (r *ClientRegistry) GetAll() []*ClientInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -237,13 +358,23 @@ var sharedHTTPClientOnce sync.Once
 func getSharedHTTPClient() *http.Client {
 	sharedHTTPClientOnce.Do(func() {
 		// Create a shared HTTP client with optimized connection pooling for cross-continent networks
+		// Configure DialContext to support both IPv4 and IPv6
+		dialer := &net.Dialer{
+			Timeout:   10 * time.Second, // Increased from 5s to 10s for slow connections
+			KeepAlive: 120 * time.Second, // Longer keep-alive for connection reuse (like LAN)
+		}
+		
+		// Create custom DialContext that supports IPv6
+		dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
+			// Try IPv6 first if address contains IPv6 format, otherwise use default
+			// Go's net.Dial will automatically try both IPv4 and IPv6
+			return dialer.DialContext(ctx, network, addr)
+		}
+		
 		sharedHTTPClient = &http.Client{
 			Timeout: 20 * time.Second, // Increased from 8s to 20s for high-latency networks (e.g., Australia-Russia ~300ms RTT)
 			Transport: &http.Transport{
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second, // Increased from 5s to 10s for slow connections
-					KeepAlive: 120 * time.Second, // Longer keep-alive for connection reuse (like LAN)
-				}).DialContext,
+				DialContext:           dialContext,
 				MaxIdleConns:          200,              // More connections for stability
 				MaxIdleConnsPerHost:   20,               // More per-host connections
 				IdleConnTimeout:       180 * time.Second, // Longer idle timeout for stable connection
@@ -808,16 +939,19 @@ func handleClientRegister(store *Store, registry *ClientRegistry, w http.Respons
 		ID     string `json:"id"`
 		Name   string `json:"name"`
 		Port   string `json:"port"`
-		IP     string `json:"ip,omitempty"`
+		IP     string `json:"ip,omitempty"`     // IPv4 address
+		IPv6   string `json:"ipv6,omitempty"`   // IPv6 address
 		Secret string `json:"secret,omitempty"` // Secret for authentication
 	}
 	
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Printf("❌ Client registration failed: invalid JSON payload from %s", r.RemoteAddr)
 		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
 		return
 	}
 	
 	if strings.TrimSpace(payload.ID) == "" {
+		log.Printf("❌ Client registration failed: missing ID")
 		http.Error(w, "id is required", http.StatusBadRequest)
 		return
 	}
@@ -825,6 +959,7 @@ func handleClientRegister(store *Store, registry *ClientRegistry, w http.Respons
 	// Verify that the server ID exists in the database
 	existing, err := store.Get(payload.ID)
 	if err != nil || existing == nil {
+		log.Printf("❌ Client registration failed: server ID '%s' not found in database", payload.ID)
 		http.Error(w, fmt.Sprintf("server id '%s' not found in database. Please add the server in admin page first", payload.ID), http.StatusNotFound)
 		return
 	}
@@ -832,64 +967,152 @@ func handleClientRegister(store *Store, registry *ClientRegistry, w http.Respons
 	// Verify secret if it's set in the database
 	if existing.Secret != "" {
 		if payload.Secret == "" {
+			log.Printf("❌ Client registration failed: secret required for ID '%s'", payload.ID)
 			http.Error(w, "secret is required for authentication", http.StatusUnauthorized)
 			return
 		}
 		if payload.Secret != existing.Secret {
+			log.Printf("❌ Client registration failed: invalid secret for ID '%s'", payload.ID)
 			http.Error(w, "invalid secret", http.StatusUnauthorized)
 			return
 		}
 	}
 	
-	// Get client IP from request - prioritize request IP over payload IP
-	// This ensures we use the actual connection IP, not what client reports
-	ip := ""
-	
-	// First try to get from HTTP headers (for proxies/load balancers)
-	ip = r.Header.Get("X-Forwarded-For")
-	if ip == "" {
-		ip = r.Header.Get("X-Real-IP")
+	// Check if there's already a client registered with this ID
+	// If yes, verify it's the same client (same IP/port) or reject the new registration
+	existingRegisteredClient := registry.Get(payload.ID)
+	if existingRegisteredClient != nil {
+		// There's already a client registered with this ID
+		// Check if it's the same client (same IP and port) or a different one
+		isSameClient := false
+		
+		// Normalize IPs for comparison (handle IPv4/IPv6)
+		newIPv4 := payload.IP
+		newIPv6 := payload.IPv6
+		existingIPv4 := existingRegisteredClient.IP
+		existingIPv6 := existingRegisteredClient.IPv6
+		
+		// Check if it's the same client by comparing IPs and port
+		if payload.Port == existingRegisteredClient.Port {
+			// Port matches, check IPs
+			if newIPv4 != "" && existingIPv4 != "" && newIPv4 == existingIPv4 {
+				isSameClient = true
+			} else if newIPv6 != "" && existingIPv6 != "" && newIPv6 == existingIPv6 {
+				isSameClient = true
+			} else if newIPv4 != "" && existingIPv6 != "" && newIPv4 == existingIPv6 {
+				// IPv4 matches existing IPv6 (same client, different IP version)
+				isSameClient = true
+			} else if newIPv6 != "" && existingIPv4 != "" && newIPv6 == existingIPv4 {
+				// IPv6 matches existing IPv4 (same client, different IP version)
+				isSameClient = true
+			}
+		}
+		
+		if !isSameClient {
+			// Different client trying to register with the same ID
+			log.Printf("❌ Client registration failed: ID '%s' is already registered by another client (existing: IPv4=%s, IPv6=%s, Port=%s; new: IPv4=%s, IPv6=%s, Port=%s)", 
+				payload.ID, existingIPv4, existingIPv6, existingRegisteredClient.Port, newIPv4, newIPv6, payload.Port)
+			http.Error(w, fmt.Sprintf("client ID '%s' is already registered by another client. Please use a different ID or disconnect the existing client first", payload.ID), http.StatusConflict)
+			return
+		}
+		
+		// Same client re-registering (e.g., after restart or IP change)
+		// Silent re-registration - no log needed for normal operation
 	}
 	
-	// If not in headers, get from connection
-	if ip == "" {
-		// Parse RemoteAddr (format: "IP:PORT")
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err == nil && host != "" {
-			ip = host
-		} else {
-			// Fallback: try to parse directly
-			parts := strings.Split(r.RemoteAddr, ":")
-			if len(parts) > 0 {
-				ip = parts[0]
+	// IMPORTANT: For client registration, we should trust the client's reported IP addresses
+	// The client knows its own public IPs better than we can detect from the connection
+	// This is especially important when:
+	// 1. Client is behind NAT (connection IP is not the client's public IP)
+	// 2. Client connects through proxy/load balancer (RemoteAddr is proxy IP)
+	// 3. Client has both IPv4 and IPv6 (we need both for proper fallback)
+	
+	// Use IPv4 and IPv6 directly from payload (client reports its own IPs)
+	ip := payload.IP
+	ipv6 := payload.IPv6
+	
+	// Only use connection IP as fallback if payload IP is missing or invalid
+	// This handles edge cases where client doesn't report its IP
+	if ip == "" || ip == "127.0.0.1" || ip == "localhost" {
+		// Try to get from HTTP headers (for proxies/load balancers)
+		ip = r.Header.Get("X-Forwarded-For")
+		if ip == "" {
+			ip = r.Header.Get("X-Real-IP")
+		}
+		
+		// If not in headers, get from connection
+		if ip == "" {
+			// Parse RemoteAddr (format: "IP:PORT" or "[IP]:PORT" for IPv6)
+			host, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err == nil && host != "" {
+				ip = host
+			} else {
+				// Fallback: try to parse directly
+				// Handle IPv6 format [::1]:port
+				if strings.HasPrefix(r.RemoteAddr, "[") {
+					end := strings.Index(r.RemoteAddr, "]")
+					if end > 0 {
+						ip = r.RemoteAddr[1:end]
+					}
+				} else {
+					parts := strings.Split(r.RemoteAddr, ":")
+					if len(parts) > 0 {
+						ip = parts[0]
+					}
+				}
 			}
+		}
+		
+		// Clean up IP (take first if comma-separated, remove whitespace)
+		if idx := strings.Index(ip, ","); idx > 0 {
+			ip = strings.TrimSpace(ip[:idx])
+		}
+		ip = strings.TrimSpace(ip)
+		
+		// If connection IP is still localhost, clear it
+		if ip == "127.0.0.1" || ip == "localhost" || ip == "::1" {
+			ip = ""
 		}
 	}
 	
-	// Clean up IP (take first if comma-separated, remove whitespace)
-	if idx := strings.Index(ip, ","); idx > 0 {
-		ip = strings.TrimSpace(ip[:idx])
-	}
-	ip = strings.TrimSpace(ip)
-	
-	// If still empty or localhost, try payload IP as fallback
-	if ip == "" || ip == "127.0.0.1" || ip == "::1" || ip == "localhost" {
-		if payload.IP != "" && payload.IP != "127.0.0.1" && payload.IP != "localhost" {
-			ip = payload.IP
-		} else {
-			// Last resort: try to get server's own IP
-			serverIP := getServerIP()
-			if serverIP != "" {
-				ip = serverIP
+	// Validate IPv4: if it's not a valid IPv4, clear it
+	if ip != "" {
+		parsedIP := net.ParseIP(ip)
+		if parsedIP != nil {
+			if parsedIP.To4() == nil {
+				// It's an IPv6 address, not IPv4
+				// If we don't have IPv6 yet, use it as IPv6
+				if ipv6 == "" {
+					ipv6 = ip
+				}
+				ip = "" // Clear IPv4 since this is IPv6
 			}
+		} else {
+			// Invalid IP format, clear it
+			ip = ""
+		}
+	}
+	
+	// Validate IPv6: if it's not a valid IPv6, clear it
+	if ipv6 != "" {
+		parsedIP := net.ParseIP(ipv6)
+		if parsedIP == nil || parsedIP.To4() != nil {
+			// Invalid IPv6 format or it's actually an IPv4 address, clear it
+			ipv6 = ""
 		}
 	}
 
-	registry.Register(payload.ID, payload.Name, payload.Port, ip)
+	registry.Register(payload.ID, payload.Name, payload.Port, ip, ipv6)
+	
 	writeJSON(w, http.StatusOK, map[string]string{"message": "registered", "id": payload.ID})
 }
 
+// Global registry reference for pollClient to update WorkingURL
+var globalClientRegistry *ClientRegistry
+
 func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistry, ipCache *IPCountryCache) {
+	// Store global reference for pollClient to use
+	globalClientRegistry = registry
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	
@@ -921,7 +1144,18 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 		// This ensures we always try to get data, even if health check would fail
 		for _, client := range clients {
 			// Safety check: skip nil clients or clients with empty ID/URL
-			if client == nil || client.ID == "" || client.URL == "" {
+			if client == nil || client.ID == "" || (client.URL == "" && client.URL6 == "") {
+				continue
+			}
+			
+			// CRITICAL: Verify that the client ID actually exists in the database
+			// This prevents polling clients that were removed from the database
+			// but still have stale entries in the registry
+			systemExists, err := store.Get(client.ID)
+			if err != nil || systemExists == nil {
+				// Client ID doesn't exist in database, remove from registry and skip
+				log.Printf("⚠️  Client %s not found in database, removing from registry", client.ID)
+				registry.Remove(client.ID)
 				continue
 			}
 			
@@ -930,7 +1164,8 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 				defer wg.Done()
 				
 				// Additional safety check inside goroutine
-				if c == nil || c.ID == "" || c.URL == "" {
+				// Must have at least one URL (IPv4 or IPv6)
+				if c == nil || c.ID == "" || (c.URL == "" && c.URL6 == "") {
 					return
 				}
 				
@@ -1057,6 +1292,16 @@ func markSystemAsOffline(store *Store, broker *SSEBroker, systemID string) {
 // isClientConnected checks if a client is actually reachable and responding
 // Uses retry logic to avoid false negatives due to temporary network issues
 func isClientConnected(client *ClientInfo) bool {
+	// Safety check
+	if client == nil {
+		return false
+	}
+	
+	// Must have at least one URL (IPv4 or IPv6)
+	if client.URL == "" && client.URL6 == "" {
+		return false
+	}
+	
 	// Use shared HTTP client for connection reuse
 	httpClient := getSharedHTTPClient()
 	
@@ -1068,61 +1313,97 @@ func isClientConnected(client *ClientInfo) bool {
 		// If health check fails, we'll retry once more
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		
-		// Try to reach the health endpoint first (faster than /metrics)
-		healthURL := client.URL + "/health"
-		req, err := http.NewRequestWithContext(ctx, "GET", healthURL, nil)
-		if err != nil {
-			cancel()
-			if attempt < maxRetries-1 {
-				time.Sleep(100 * time.Millisecond) // Brief delay before retry
-				continue
+		// Build URL list: prioritize working URL if available
+		// CRITICAL: If WorkingURL is set (especially if it's IPv6), use ONLY that URL
+		// This ensures that once IPv6 connection succeeds, we never try IPv4 again
+		urls := []string{}
+		if client.WorkingURL != "" {
+			// If we have a working URL, use ONLY that URL
+			// This ensures that once IPv6 works, we never try IPv4 again
+			urls = append(urls, client.WorkingURL)
+			// Don't add other URLs if WorkingURL is set - it represents the known working connection
+		} else {
+			// No working URL yet, try IPv4 first, then IPv6
+			if client.URL != "" {
+				urls = append(urls, client.URL)
 			}
-			return false
+			if client.URL6 != "" {
+				urls = append(urls, client.URL6)
+			}
 		}
 		
-		// Set proper headers for connection reuse
-		req.Header.Set("User-Agent", "PulseMonitor/1.0")
-		req.Header.Set("Connection", "keep-alive")
-		req.Header.Set("Accept", "*/*")
-		
-		resp, err := httpClient.Do(req)
-		if err != nil {
-			cancel()
-			// If this is not the last attempt, retry
-			if attempt < maxRetries-1 {
-				time.Sleep(100 * time.Millisecond) // Brief delay before retry
+		var resp *http.Response
+		var err error
+		var successfulURL string
+		for _, url := range urls {
+			// Try to reach the health endpoint first (faster than /metrics)
+			healthURL := url + "/health"
+			req, reqErr := http.NewRequestWithContext(ctx, "GET", healthURL, nil)
+			if reqErr != nil {
 				continue
 			}
-			// Health check failed after all retries
-			return false
+			
+			// Set proper headers for connection reuse
+			req.Header.Set("User-Agent", "PulseMonitor/1.0")
+			req.Header.Set("Connection", "keep-alive")
+			req.Header.Set("Accept", "*/*")
+			
+			resp, err = httpClient.Do(req)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				successfulURL = url
+				resp.Body.Close()
+				cancel()
+				// Update working URL if we successfully connected
+				// CRITICAL: Always update WorkingURL when we successfully connect
+				// Use registry method to update atomically, so it's preserved even during re-registration
+				if successfulURL != "" {
+					// Update directly on the client object (pointer, so it updates the registry)
+					if client.WorkingURL != successfulURL {
+						client.WorkingURL = successfulURL
+					}
+					// CRITICAL: Also update via registry to ensure it's preserved during re-registration
+					// This is a safety measure in case Register creates a new object
+					if globalClientRegistry != nil {
+						globalClientRegistry.UpdateWorkingURL(client.ID, successfulURL)
+					}
+				}
+				return true // Success
+			}
+			if resp != nil {
+				resp.Body.Close()
+			}
+			resp = nil
 		}
 		
-		statusOK := resp.StatusCode == http.StatusOK
-		resp.Body.Close()
 		cancel()
 		
-		if statusOK {
-			return true
-		}
-		
-		// If status is not OK and not last attempt, retry
+		// If this is not the last attempt, retry
 		if attempt < maxRetries-1 {
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond) // Brief delay before retry
 			continue
 		}
 		
+		// Health check failed after all retries
+		// Don't clear WorkingURL here - let the polling loop handle it
+		// This prevents clearing WorkingURL due to temporary health check failures
 		return false
 	}
 	
+	// This should never be reached, but required by Go compiler
 	return false
 }
 
 func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool {
 	// Safety checks: prevent nil pointer dereference
-	if client == nil || client.URL == "" || client.ID == "" {
+	if client == nil || client.ID == "" {
 		return false
 	}
 	if store == nil || ipCache == nil {
+		return false
+	}
+	
+	// Must have at least one URL (IPv4 or IPv6)
+	if client.URL == "" && client.URL6 == "" {
 		return false
 	}
 	
@@ -1139,27 +1420,106 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second) // Increased to 15s for cross-continent networks
 	defer cancel()
 	
-	// Request metrics from client
-	url := client.URL + "/metrics"
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return false
+	// Build URL list: prioritize working URL if available
+	// CRITICAL: If WorkingURL is set (especially if it's IPv6), use ONLY that URL
+	// This ensures that once IPv6 connection succeeds, we never try IPv4 again
+	urls := []string{}
+	if client.WorkingURL != "" {
+		// If we have a working URL, use ONLY that URL
+		// This ensures that once IPv6 works, we never try IPv4 again
+		urls = append(urls, client.WorkingURL)
+		// Don't add other URLs if WorkingURL is set - it represents the known working connection
+	} else {
+		// No working URL yet, try IPv4 first, then IPv6
+		if client.URL != "" {
+			urls = append(urls, client.URL)
+		}
+		if client.URL6 != "" {
+			urls = append(urls, client.URL6)
+		}
 	}
 	
-	// Set proper headers for connection reuse and efficiency
-	req.Header.Set("User-Agent", "PulseMonitor/1.0")
-	req.Header.Set("Connection", "keep-alive")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Accept-Encoding", "gzip, deflate") // Enable compression
+	var resp *http.Response
+	var err error
+	var successfulURL string
+	for _, url := range urls {
+		// Request metrics from client
+		metricsURL := url + "/metrics"
+		req, reqErr := http.NewRequestWithContext(ctx, "GET", metricsURL, nil)
+		if reqErr != nil {
+			// Silent failure - request creation errors are rare
+			continue
+		}
+		
+		// Set proper headers for connection reuse and efficiency
+		req.Header.Set("User-Agent", "PulseMonitor/1.0")
+		req.Header.Set("Connection", "keep-alive")
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Accept-Encoding", "gzip, deflate") // Enable compression
+		
+		resp, err = httpClient.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			successfulURL = url
+			break // Success, exit loop
+		}
+		if err != nil {
+			// Only log if working URL failed (this is important to track)
+			if client.WorkingURL != "" && url == client.WorkingURL {
+				log.Printf("⚠️  Client %s: cached working URL (%s) failed: %v, trying alternatives...", client.ID, url, err)
+			}
+			// Don't log individual connection attempts - only log final failure
+		} else if resp != nil {
+			if resp.StatusCode != http.StatusOK {
+				// Don't log individual HTTP errors - only log final failure
+			}
+			resp.Body.Close()
+		}
+		resp = nil
+	}
 	
-	resp, err := httpClient.Do(req)
-	if err != nil {
+	if resp == nil {
+		// All URLs failed, clear working URL only if it was in the failed list
+		// Don't clear if WorkingURL wasn't tried (e.g., if it was removed during registration)
+		if client.WorkingURL != "" {
+			// Check if WorkingURL was in the failed URLs list
+			workingURLTried := false
+			for _, triedURL := range urls {
+				if triedURL == client.WorkingURL {
+					workingURLTried = true
+					break
+				}
+			}
+			if workingURLTried {
+				// Only clear if WorkingURL was actually tried and failed
+				client.WorkingURL = ""
+				log.Printf("⚠️  Client %s: all URLs failed (including working URL), cleared working URL", client.ID)
+			}
+		}
+		// Only log polling failures after multiple consecutive failures to reduce log spam
+		// Individual failures are handled by the failure count mechanism
+		// This prevents log flooding when clients have temporary network issues
 		return false
 	}
 	defer resp.Body.Close()
 	
 	if resp.StatusCode != http.StatusOK {
 		return false
+	}
+	
+	// Update working URL if we successfully connected
+	// CRITICAL: Always update WorkingURL when we successfully connect, even if it's the same
+	// This ensures WorkingURL is preserved across registrations
+	// Use registry method to update atomically, so it's preserved even during re-registration
+	if successfulURL != "" {
+		// Update directly on the client object (pointer, so it updates the registry)
+		if client.WorkingURL != successfulURL {
+			client.WorkingURL = successfulURL
+		}
+		// CRITICAL: Also update via registry to ensure it's preserved during re-registration
+		// This is a safety measure in case Register creates a new object
+		if globalClientRegistry != nil {
+			globalClientRegistry.UpdateWorkingURL(client.ID, successfulURL)
+		}
 	}
 	
 	var payload metricPayload
@@ -1492,6 +1852,7 @@ func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		log.Printf("⚠️  Failed to encode JSON response: %v", err)
 	}
 }
 
@@ -2001,13 +2362,40 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 		}
 		
 		for _, client := range clients {
-			// Safety check: skip nil clients or clients with empty ID/URL
-			if client == nil || client.ID == "" || client.URL == "" {
+			// Safety check: skip nil clients or clients with empty ID
+			// Must have at least one URL (IPv4 or IPv6)
+			if client == nil || client.ID == "" || (client.URL == "" && client.URL6 == "") {
+				continue
+			}
+			
+			// CRITICAL: Verify that the client ID actually exists in the database
+			// This prevents sending TCPing requests to clients that were removed from the database
+			// but still have stale entries in the registry
+			systemExists, err := store.Get(client.ID)
+			if err != nil || systemExists == nil {
+				// Client ID doesn't exist in database, remove from registry and skip
+				log.Printf("⚠️  Client %s not found in database, removing from registry", client.ID)
+				registry.Remove(client.ID)
 				continue
 			}
 			
 			// Only send tcping to connected clients
-			if !isClientConnected(client) {
+			// CRITICAL: Re-fetch client from registry to get latest WorkingURL before checking connection
+			// This ensures we use the most up-to-date WorkingURL (especially IPv6) which may have been
+			// updated by pollClient or isClientConnected
+			latestClient := registry.Get(client.ID)
+			if latestClient == nil {
+				continue
+			}
+			// CRITICAL: If WorkingURL is set (especially IPv6), we should trust it and allow tcping
+			// This is important because isClientConnected may fail due to temporary network issues,
+			// but if we have a WorkingURL, it means we've successfully connected before
+			if latestClient.WorkingURL != "" {
+				// WorkingURL is set, trust it and allow tcping (skip connection check)
+				// This is especially important for IPv6 connections which may have intermittent issues
+			} else if !isClientConnected(latestClient) {
+				// No WorkingURL and connection check failed, skip tcping
+				// Silent skip - no log needed for normal operation
 				continue
 			}
 			
@@ -2018,32 +2406,89 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 					continue
 				}
 				
-				go func(c *ClientInfo, tgt TCPingTargetEntry) {
-					// Additional safety check inside goroutine
-					if c == nil || c.ID == "" || c.URL == "" || tgt.Address == "" {
+				go func(clientID string, tgt TCPingTargetEntry) {
+					// CRITICAL: Re-fetch client from registry inside goroutine to get latest WorkingURL
+					// This ensures we always use the most up-to-date WorkingURL (especially IPv6)
+					// which may have been updated by pollClient or isClientConnected
+					c := registry.Get(clientID)
+					if c == nil || c.ID == "" || tgt.Address == "" {
+						return
+					}
+					// Must have at least one URL
+					if c.URL == "" && c.URL6 == "" {
 						return
 					}
 					
-					url := c.URL + "/tcping"
-					// Send target address in request body
-					tcpingRequest := map[string]string{
-						"target": tgt.Address,
+					// Build URL list: prioritize working URL if available
+					// CRITICAL: If WorkingURL is set (especially if it's IPv6), use ONLY that URL
+					// This ensures that once IPv6 connection succeeds, we never try IPv4 again
+					urls := []string{}
+					if c.WorkingURL != "" {
+						// If we have a working URL, use ONLY that URL
+						// This ensures that once IPv6 works, we never try IPv4 again
+						urls = append(urls, c.WorkingURL+"/tcping")
+						// Don't add other URLs if WorkingURL is set - it represents the known working connection
+					} else {
+						// No working URL yet, try IPv4 first, then IPv6
+						if c.URL != "" {
+							urls = append(urls, c.URL+"/tcping")
+						}
+						if c.URL6 != "" {
+							urls = append(urls, c.URL6+"/tcping")
+						}
 					}
-					requestData, _ := json.Marshal(tcpingRequest)
-					req, err := http.NewRequest("POST", url, strings.NewReader(string(requestData)))
-					if err != nil {
-						return
-					}
-					req.Header.Set("Content-Type", "application/json")
 					
-					resp, err := tcpingHTTPClient.Do(req)
-					if err != nil {
-						return
+					var resp *http.Response
+					var err error
+					var successfulBaseURL string
+					for _, url := range urls {
+						// Send target address in request body
+						tcpingRequest := map[string]string{
+							"target": tgt.Address,
+						}
+						requestData, _ := json.Marshal(tcpingRequest)
+						req, reqErr := http.NewRequest("POST", url, strings.NewReader(string(requestData)))
+						if reqErr != nil {
+							// Silent failure - request creation errors are rare and usually indicate programming errors
+							continue
+						}
+						req.Header.Set("Content-Type", "application/json")
+						
+						resp, err = tcpingHTTPClient.Do(req)
+						if err == nil && resp.StatusCode == http.StatusOK {
+							// Extract base URL (remove /tcping suffix)
+							if strings.HasSuffix(url, "/tcping") {
+								successfulBaseURL = strings.TrimSuffix(url, "/tcping")
+							} else {
+								successfulBaseURL = url
+							}
+							break // Success, exit loop
+						}
+						// Silent failures - TCPing failures are expected in some network conditions
+						// Only log critical failures that indicate system issues
+						if resp != nil {
+							resp.Body.Close()
+						}
+						resp = nil
 					}
+					
+					if resp == nil {
+						// Silent failure - TCPing failures are expected and handled gracefully
+						// Results are saved to database even on failure, so no log needed
+						return // All attempts failed
+					}
+					
+					// CRITICAL: defer resp.Body.Close() must be before any early returns
+					// This ensures the response body is always closed, even if there's an error
 					defer resp.Body.Close()
 					
-					if resp.StatusCode != http.StatusOK {
-						return
+					// Update working URL if we successfully connected via TCPing
+					// CRITICAL: Always update WorkingURL when we successfully connect via TCPing
+					// This ensures WorkingURL is preserved and reflects the actual working connection
+					// Use registry method to update atomically, so it's preserved even during re-registration
+					if successfulBaseURL != "" {
+						// Update working URL via the registry to ensure atomicity and persistence across re-registrations
+						registry.UpdateWorkingURL(clientID, successfulBaseURL)
 					}
 					
 					var tcpingResp TCPingResponse
@@ -2060,7 +2505,7 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 					}
 					
 					result := TCPingResult{
-						ClientID:  c.ID,
+						ClientID:  clientID,
 						Target:    tgt.Address,
 						Latency:   latency,
 						Timestamp: time.Now().UTC(),
@@ -2072,7 +2517,7 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 					
 					// Update SystemMetric with latest tcping data for this target (only if successful)
 					if tcpingResp.Success {
-						existing, err := store.Get(c.ID)
+						existing, err := store.Get(clientID)
 						if err == nil && existing != nil {
 							// Initialize TCPingData map if nil
 							if existing.TCPingData == nil {
@@ -2088,7 +2533,7 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 							}
 						}
 					}
-				}(client, target)
+				}(client.ID, target)
 			}
 		}
 	}
@@ -2309,4 +2754,5 @@ func isAuthenticated(r *http.Request) bool {
 
 	return false
 }
+
 

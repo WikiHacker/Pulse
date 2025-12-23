@@ -42,6 +42,8 @@ curl -sSL https://raw.githubusercontent.com/xhhcn/Pulse/main/docker-compose.yaml
 docker compose up -d
 ```
 
+> **IPv6 支持**：如果您的服务器需要 IPv6 支持，请参考下方的 [Docker IPv6 配置](#docker-ipv6-配置) 章节。
+
 #### 方式二：Docker Run
 
 ```bash
@@ -54,6 +56,94 @@ docker run -d \
 ```
 
 访问 `http://YOUR_IP:8008` 查看监控面板
+
+---
+
+## 🌐 Docker IPv6 配置
+
+Pulse 支持 IPv4/IPv6 双栈，如果您的服务器需要 IPv6 支持，请按照以下步骤配置：
+
+### 前置要求
+
+1. **确保宿主机已启用 IPv6**
+   ```bash
+   # 检查 IPv6 是否启用
+   ip -6 addr show
+   
+   # 检查 IPv6 转发是否启用
+   sysctl net.ipv6.conf.all.forwarding
+   # 如果输出为 0，需要启用：
+   sudo sysctl -w net.ipv6.conf.all.forwarding=1
+   
+   # 永久启用（编辑 /etc/sysctl.conf）
+   echo "net.ipv6.conf.all.forwarding=1" | sudo tee -a /etc/sysctl.conf
+   ```
+
+2. **配置 Docker Daemon 启用 IPv6**
+
+   编辑或创建 `/etc/docker/daemon.json`：
+   ```json
+   {
+     "ipv6": true,
+     "fixed-cidr-v6": "fd00:dead:beef:c0::/80",
+     "experimental": true,
+     "ip6tables": true
+   }
+   ```
+   
+   > **说明**：
+   > - `ipv6: true` - 全局启用 Docker 的 IPv6 支持（**必需**）
+   > - `fixed-cidr-v6` - Docker 使用的 IPv6 子网范围（可根据实际情况调整）
+   > - `experimental: true` - 启用实验性功能（某些 IPv6 功能需要）
+   > - `ip6tables: true` - 启用 IPv6 的 iptables 支持（用于网络隔离和端口映射）
+   
+   重启 Docker 服务使配置生效：
+   ```bash
+   sudo systemctl restart docker
+   ```
+
+3. **配置 docker-compose.yaml 启用 IPv6**
+
+   在 `docker-compose.yaml` 中配置网络启用 IPv6：
+   ```yaml
+   services:
+     pulse:
+       image: xhh1128/pulse:latest
+       container_name: pulse-monitor
+       ports:
+         - 8008:8008
+       volumes:
+         - pulse-data:/app/data
+       restart: unless-stopped
+       networks:
+         - pulse-network
+
+   volumes:
+     pulse-data:
+
+   networks:
+     pulse-network:
+       enable_ipv6: true
+       ipam:
+         driver: default
+   ```
+
+4. **重新创建容器**
+
+   ```bash
+   docker compose down
+   docker compose up -d
+   ```
+
+5. **验证 IPv6 配置**
+
+   ```bash
+   # 检查容器 IPv6 地址
+   docker exec pulse-monitor ip -6 addr show
+   
+   # 测试 IPv6 连接（如果容器有 ping6）
+   docker exec pulse-monitor ping6 -c 2 2001:4860:4860::8888
+   ```
 
 ---
 

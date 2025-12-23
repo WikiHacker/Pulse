@@ -134,14 +134,23 @@ func registerWithServer() {
 	for i := 0; i < maxRetries; i++ {
 		time.Sleep(time.Duration(i+1) * time.Second) // Wait before retry
 		
-		// Get local IP address
-		localIP := getLocalIP()
+		// Get public IP addresses (both IPv4 and IPv6)
+		// This ensures consistency and uses the real public IP, not private IP
+		ipv4, ipv6 := getIPAddresses()
+		// Fallback to local IP only if no public IP found (should rarely happen)
+		if ipv4 == "" {
+			ipv4 = getLocalIP()
+		}
 		
 		payload := map[string]interface{}{
 			"id":   agentID,
 			"name": agentName,
 			"port": envOr("CLIENT_PORT", "9090"),
-			"ip":   localIP,
+			"ip":   ipv4,
+		}
+		// Include IPv6 if available
+		if ipv6 != "" {
+			payload["ipv6"] = ipv6
 		}
 		
 		// Add secret if provided via environment variable
@@ -166,14 +175,21 @@ func registerWithServer() {
 		
 		resp, err := httpClient.Do(req)
 		if err != nil {
+			log.Printf("⚠️  Registration attempt %d/%d failed: %v", i+1, maxRetries, err)
 			continue
 		}
 		defer resp.Body.Close()
 		
 		if resp.StatusCode == http.StatusOK {
+			log.Printf("✅ Successfully registered with server (ID: %s, IPv4: %s, IPv6: %s)", agentID, ipv4, ipv6)
 			return
+		} else {
+			// Read error response body for debugging
+			body, _ := ioutil.ReadAll(resp.Body)
+			log.Printf("❌ Registration failed (attempt %d/%d): HTTP %d - %s", i+1, maxRetries, resp.StatusCode, string(body))
 		}
 	}
+	log.Printf("❌ Failed to register after %d attempts", maxRetries)
 }
 
 func getLocalIP() string {
@@ -207,13 +223,23 @@ func startPeriodicRegistration() {
 	consecutiveFailures := 0
 	
 	for range ticker.C {
-		localIP := getLocalIP()
+		// Get public IP addresses (both IPv4 and IPv6)
+		// This ensures consistency and uses the real public IP, not private IP
+		ipv4, ipv6 := getIPAddresses()
+		// Fallback to local IP only if no public IP found (should rarely happen)
+		if ipv4 == "" {
+			ipv4 = getLocalIP()
+		}
 		
 		payload := map[string]interface{}{
 			"id":   agentID,
 			"name": agentName,
 			"port": envOr("CLIENT_PORT", "9090"),
-			"ip":   localIP,
+			"ip":   ipv4,
+		}
+		// Include IPv6 if available
+		if ipv6 != "" {
+			payload["ipv6"] = ipv6
 		}
 		
 		// Add secret if provided via environment variable (CRITICAL: must include secret in periodic registration)
@@ -305,8 +331,15 @@ func handleTCPingRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Normalize target: if no port specified, add default port 80
+	target := tcpingReq.Target
+	if !strings.Contains(target, ":") {
+		// No port specified, add default port 80
+		target = target + ":80"
+	}
+
 	// Execute tcping to target specified by backend
-	latency, err := executeTCPing(tcpingReq.Target)
+	latency, err := executeTCPing(target)
 	
 	response := TCPingResponse{
 		Success: err == nil,
@@ -315,6 +348,7 @@ func handleTCPingRequest(w http.ResponseWriter, r *http.Request) {
 	
 	if err != nil {
 		response.Error = err.Error()
+		log.Printf("❌ TCPing to %s failed: %v", target, err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
