@@ -52,6 +52,7 @@ var (
 	agentName     string
 	startTime     time.Time
 	serverBase    string
+	secret        string // Secret for authenticating metrics endpoint
 	
 	// Cache for data that doesn't change frequently
 	cpuModelCache          string
@@ -71,6 +72,7 @@ func main() {
 	agentName = envOr("AGENT_NAME", agentID)
 	serverBase = strings.TrimSuffix(envOr("SERVER_BASE", "http://localhost:8080"), "/")
 	clientPort := envOr("CLIENT_PORT", "9090")
+	secret = envOr("SECRET", "")
 
 	// Record start time for uptime calculation
 	startTime = time.Now()
@@ -284,6 +286,24 @@ func handleMetricsRequest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
+	}
+
+	// Security: Verify secret if it's configured
+	if secret != "" {
+		// Check secret from Authorization header (Bearer token)
+		authHeader := r.Header.Get("Authorization")
+		providedSecret := ""
+		if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+			providedSecret = strings.TrimPrefix(authHeader, "Bearer ")
+		} else {
+			// Fallback: check query parameter
+			providedSecret = r.URL.Query().Get("secret")
+		}
+		
+		if providedSecret != secret {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	// Collect system metrics

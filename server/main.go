@@ -1439,6 +1439,13 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 		}
 	}
 	
+	// Get secret from database for authentication
+	var secret string
+	existing, _ := store.Get(client.ID)
+	if existing != nil {
+		secret = existing.Secret
+	}
+	
 	var resp *http.Response
 	var err error
 	var successfulURL string
@@ -1456,6 +1463,11 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 		req.Header.Set("Connection", "keep-alive")
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("Accept-Encoding", "gzip, deflate") // Enable compression
+		
+		// Security: Add secret to Authorization header if configured
+		if secret != "" {
+			req.Header.Set("Authorization", "Bearer "+secret)
+		}
 		
 		resp, err = httpClient.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
