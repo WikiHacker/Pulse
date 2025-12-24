@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +67,10 @@ var (
 	// Shared HTTP client for connection reuse (important for cross-continent networks)
 	sharedHTTPClient     *http.Client
 	sharedHTTPClientOnce sync.Once
+	
+	// Security warning log throttling
+	lastSecurityWarningTime time.Time
+	securityWarningMutex    sync.Mutex
 )
 
 func main() {
@@ -127,6 +133,18 @@ func getSharedHTTPClient() *http.Client {
 		}
 	})
 	return sharedHTTPClient
+}
+
+// logOncePerMinute logs a message at most once per minute to avoid log spam
+func logOncePerMinute(message string) {
+	securityWarningMutex.Lock()
+	defer securityWarningMutex.Unlock()
+	
+	now := time.Now()
+	if now.Sub(lastSecurityWarningTime) >= 1*time.Minute {
+		log.Println(message)
+		lastSecurityWarningTime = now
+	}
 }
 
 // Register client with server
@@ -288,9 +306,11 @@ func handleMetricsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Security: Verify secret if it's configured
+	// SECURITY: Verify secret authentication if configured
+	// If secret is configured, it must be provided and match
+	// If secret is empty, allow access for backward compatibility (but log warning)
 	if secret != "" {
-		// Check secret from Authorization header (Bearer token)
+		// Secret is configured - require authentication
 		authHeader := r.Header.Get("Authorization")
 		providedSecret := ""
 		if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
@@ -301,9 +321,14 @@ func handleMetricsRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		
 		if providedSecret != secret {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			http.Error(w, "unauthorized: invalid secret", http.StatusUnauthorized)
 			return
 		}
+	} else {
+		// SECURITY WARNING: No secret configured - allowing access for backward compatibility
+		// This is insecure and should be fixed by configuring SECRET environment variable
+		// Log warning only once per minute to avoid log spam
+		logOncePerMinute("⚠️  SECURITY WARNING: /metrics endpoint is accessible without authentication. Please configure SECRET environment variable for security.")
 	}
 
 	// Collect system metrics
@@ -338,6 +363,31 @@ func handleTCPingRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SECURITY: Verify secret authentication if configured
+	// If secret is configured, it must be provided and match
+	// If secret is empty, allow access for backward compatibility (but log warning)
+	if secret != "" {
+		// Secret is configured - require authentication
+		authHeader := r.Header.Get("Authorization")
+		providedSecret := ""
+		if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+			providedSecret = strings.TrimPrefix(authHeader, "Bearer ")
+		} else {
+			// Fallback: check query parameter
+			providedSecret = r.URL.Query().Get("secret")
+		}
+		
+		if providedSecret != secret {
+			http.Error(w, "unauthorized: invalid secret", http.StatusUnauthorized)
+			return
+		}
+	} else {
+		// SECURITY WARNING: No secret configured - allowing access for backward compatibility
+		// This is insecure and should be fixed by configuring SECRET environment variable
+		// Log warning only once per minute to avoid log spam
+		logOncePerMinute("⚠️  SECURITY WARNING: /tcping endpoint is accessible without authentication. Please configure SECRET environment variable for security.")
+	}
+
 	// Parse target from request body
 	var tcpingReq TCPingRequest
 	if err := json.NewDecoder(r.Body).Decode(&tcpingReq); err != nil {
@@ -351,11 +401,57 @@ func handleTCPingRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SECURITY: Validate and normalize target address
+	// - Check length to prevent DoS attacks
+	// - Validate format (host:port or host)
+	// - Validate port range (1-65535)
+	target := strings.TrimSpace(tcpingReq.Target)
+	if len(target) > 255 {
+		// RFC 1035: Domain names are limited to 255 characters
+		http.Error(w, "target address too long", http.StatusBadRequest)
+		return
+	}
+	
 	// Normalize target: if no port specified, add default port 80
-	target := tcpingReq.Target
-	if !strings.Contains(target, ":") {
+	var host, portStr string
+	if strings.Contains(target, ":") {
+		// Split host and port
+		parts := strings.SplitN(target, ":", 2)
+		if len(parts) != 2 {
+			http.Error(w, "invalid target format", http.StatusBadRequest)
+			return
+		}
+		host = strings.TrimSpace(parts[0])
+		portStr = strings.TrimSpace(parts[1])
+	} else {
 		// No port specified, add default port 80
-		target = target + ":80"
+		host = strings.TrimSpace(target)
+		portStr = "80"
+	}
+	
+	// Validate host is not empty
+	if host == "" {
+		http.Error(w, "target host cannot be empty", http.StatusBadRequest)
+		return
+	}
+	
+	// Validate port is a number and in valid range (1-65535)
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		http.Error(w, "invalid port number (must be 1-65535)", http.StatusBadRequest)
+		return
+	}
+	
+	// Reconstruct normalized target
+	target = fmt.Sprintf("%s:%d", host, port)
+	
+	// Additional validation: check for common injection patterns
+	// Allow valid characters for hostnames and IP addresses
+	// Hostname regex: alphanumeric, dots, hyphens, brackets (for IPv6)
+	hostnameRegex := regexp.MustCompile(`^[a-zA-Z0-9.\-\[\]:]+$`)
+	if !hostnameRegex.MatchString(host) {
+		http.Error(w, "invalid target host format", http.StatusBadRequest)
+		return
 	}
 
 	// Execute tcping to target specified by backend
@@ -432,7 +528,7 @@ func collectSystemMetrics() metricPayload {
 		NetOutMBps:         netOut,
 		TotalNetInBytes:    totalNetInBytes,
 		TotalNetOutBytes:   totalNetOutBytes,
-		AgentVersion:       "0.8.0",
+		AgentVersion:       "1.2.1",
 		Alert:              false, // Can be enhanced with actual alert logic
 	}
 }

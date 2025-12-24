@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -120,6 +122,33 @@ func (b *SSEBroker) Broadcast(event string) {
 			// Client buffer full, skip
 		}
 	}
+}
+
+// broadcastJSON safely broadcasts a JSON event by marshaling the data structure
+// This prevents JSON injection vulnerabilities from user-controlled input
+func broadcastJSON(broker *SSEBroker, eventType string, data map[string]interface{}) {
+	if broker == nil {
+		return
+	}
+	
+	// Build event data with type
+	eventData := map[string]interface{}{
+		"type": eventType,
+	}
+	// Merge additional data
+	for k, v := range data {
+		eventData[k] = v
+	}
+	
+	// Marshal to JSON safely
+	jsonData, err := json.Marshal(eventData)
+	if err != nil {
+		// If marshaling fails, log error but don't crash
+		log.Printf("⚠️  Failed to marshal broadcast event: %v", err)
+		return
+	}
+	
+	broker.Broadcast(string(jsonData))
 }
 
 // Client registry for tracking agent clients
@@ -773,6 +802,44 @@ func handleIngestMetric(store *Store, broker *SSEBroker, w http.ResponseWriter, 
 	// Client sends data with uptime > 0 or has real metrics
 	isFromClient := payload.Uptime > 0 || payload.IPv4 != "" || payload.OS != ""
 	
+	// SECURITY: Authentication/Authorization
+	// - If from admin page (!isFromClient): require admin authentication
+	// - If from client (isFromClient): verify secret matches database and system exists
+	if !isFromClient {
+		// Admin page operation - require authentication
+		if !isAuthenticated(r) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	} else {
+		// Client operation - system must exist and verify secret if configured
+		if existing == nil {
+			// Client cannot create new systems - only update existing ones
+			// New systems must be created by admin first
+			http.Error(w, "system not found", http.StatusNotFound)
+			return
+		}
+		
+		// Verify secret if configured
+		if existing.Secret != "" {
+			authHeader := r.Header.Get("Authorization")
+			providedSecret := ""
+			if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+				providedSecret = strings.TrimPrefix(authHeader, "Bearer ")
+			} else {
+				// Fallback: check query parameter
+				providedSecret = r.URL.Query().Get("secret")
+			}
+			
+			if providedSecret != existing.Secret {
+				http.Error(w, "unauthorized: invalid secret", http.StatusUnauthorized)
+				return
+			}
+		}
+		// If no secret configured, allow for backward compatibility (but log warning)
+		// This matches the behavior of /metrics endpoint on client
+	}
+	
 	if isFromClient {
 		// Client is sending data, system is online - update timestamp
 		updatedAt = time.Now().UTC()
@@ -880,7 +947,10 @@ func handleIngestMetric(store *Store, broker *SSEBroker, w http.ResponseWriter, 
 	// Client data updates will be broadcast by the polling loop every 3 seconds
 	// This prevents duplicate broadcasts when client sends data and polling happens simultaneously
 	if broker != nil && !isFromClient {
-		broker.Broadcast(`{"type":"metric_updated","id":"` + metric.ID + `"}`)
+		// SECURITY: Use JSON marshaling to prevent injection from user-controlled ID
+		broadcastJSON(broker, "metric_updated", map[string]interface{}{
+			"id": metric.ID,
+		})
 	}
 	
 	// CRITICAL SECURITY: Never expose secret in API responses to unauthenticated users
@@ -926,7 +996,10 @@ func handleDeleteMetric(store *Store, broker *SSEBroker, registry *ClientRegistr
 	
 	// Broadcast deletion to all connected clients
 	if broker != nil {
-		broker.Broadcast(`{"type":"metric_deleted","id":"` + id + `"}`)
+		// SECURITY: Use JSON marshaling to prevent injection from user-controlled ID
+		broadcastJSON(broker, "metric_deleted", map[string]interface{}{
+			"id": id,
+		})
 	}
 	
 	writeJSON(w, http.StatusOK, map[string]string{"message": "deleted", "id": id})
@@ -1251,7 +1324,10 @@ func startClientPolling(store *Store, broker *SSEBroker, registry *ClientRegistr
 			// Always broadcast to maintain 3-second update frequency
 			// Frontend will check if data actually changed and update accordingly
 			if broker != nil {
-				broker.Broadcast(`{"type":"metric_updated","count":` + fmt.Sprintf("%d", count) + `}`)
+				// SECURITY: Use JSON marshaling to prevent injection
+				broadcastJSON(broker, "metric_updated", map[string]interface{}{
+					"count": count,
+				})
 			}
 		}()
 	}
@@ -1561,12 +1637,13 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 	timeDisplay := formatUptime(payload.Uptime)
 	
 	// Get existing system to preserve order, name, tags, and secret from database
-	existing, _ := store.Get(client.ID)
+	// Reuse existing variable from earlier in function (line 1444)
+	existing, _ = store.Get(client.ID)
 	order := 0
 	name := client.Name // Default to client name if not in database
 	var tcpingData map[string]TCPingTargetData
 	var tags []string
-	var secret string
+	// Note: secret variable already declared at line 1443, don't redeclare
 	if existing != nil {
 		order = existing.Order
 		// Preserve name from database (don't override with client name)
@@ -1837,7 +1914,10 @@ func handleUpdateOrder(store *Store, broker *SSEBroker, w http.ResponseWriter, r
 
 	// Broadcast order change to all connected clients
 	if broker != nil {
-		broker.Broadcast(`{"type":"order_updated","count":` + fmt.Sprintf("%d", len(payload.Order)) + `}`)
+		// SECURITY: Use JSON marshaling to prevent injection
+		broadcastJSON(broker, "order_updated", map[string]interface{}{
+			"count": len(payload.Order),
+		})
 	}
 	
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -1923,6 +2003,30 @@ func handleTCPingResult(store *Store, w http.ResponseWriter, r *http.Request) {
 	if payload.ClientID == "" {
 		http.Error(w, "client_id is required", http.StatusBadRequest)
 		return
+	}
+	
+	// SECURITY: Verify that the client_id exists and verify secret if configured
+	existing, err := store.Get(payload.ClientID)
+	if err != nil || existing == nil {
+		http.Error(w, "client not found", http.StatusNotFound)
+		return
+	}
+	
+	// If secret is configured in database, require authentication
+	if existing.Secret != "" {
+		authHeader := r.Header.Get("Authorization")
+		providedSecret := ""
+		if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+			providedSecret = strings.TrimPrefix(authHeader, "Bearer ")
+		} else {
+			// Fallback: check query parameter
+			providedSecret = r.URL.Query().Get("secret")
+		}
+		
+		if providedSecret != existing.Secret {
+			http.Error(w, "unauthorized: invalid secret", http.StatusUnauthorized)
+			return
+		}
 	}
 	
 	// Save result regardless of success/failure (nil latency for failures)
@@ -2240,18 +2344,70 @@ func handleSetTCPingConfig(store *Store, w http.ResponseWriter, r *http.Request)
 	// Allow empty targets list (default state)
 	// Empty targets means tcping is disabled
 	
-	// Validate target format (basic check: should contain ":")
+	// SECURITY: Validate target format with enhanced checks
+	// - Check length to prevent DoS attacks
+	// - Validate format (host:port)
+	// - Validate port range (1-65535)
+	// - Validate hostname format
 	for _, target := range config.Targets {
 		if target.Name == "" {
 			http.Error(w, "target name is required", http.StatusBadRequest)
 			return
 		}
+		
+		// Validate name length
+		if len(target.Name) > 100 {
+			http.Error(w, fmt.Sprintf("target name too long (max 100 characters) for target: %s", target.Name), http.StatusBadRequest)
+			return
+		}
+		
 		if target.Address == "" {
 			http.Error(w, fmt.Sprintf("target address is required for target: %s", target.Name), http.StatusBadRequest)
 			return
 		}
-		if !strings.Contains(target.Address, ":") {
-			http.Error(w, fmt.Sprintf("invalid target format: %s (expected format: host:port)", target.Address), http.StatusBadRequest)
+		
+		// Validate address length (RFC 1035: Domain names limited to 255 characters)
+		address := strings.TrimSpace(target.Address)
+		if len(address) > 255 {
+			http.Error(w, fmt.Sprintf("target address too long for target: %s", target.Name), http.StatusBadRequest)
+			return
+		}
+		
+		// Must contain ":" to separate host and port
+		if !strings.Contains(address, ":") {
+			http.Error(w, fmt.Sprintf("invalid target format: %s (expected format: host:port) for target: %s", address, target.Name), http.StatusBadRequest)
+			return
+		}
+		
+		// Split host and port
+		parts := strings.SplitN(address, ":", 2)
+		if len(parts) != 2 {
+			http.Error(w, fmt.Sprintf("invalid target format: %s (expected format: host:port) for target: %s", address, target.Name), http.StatusBadRequest)
+			return
+		}
+		
+		host := strings.TrimSpace(parts[0])
+		portStr := strings.TrimSpace(parts[1])
+		
+		// Validate host is not empty
+		if host == "" {
+			http.Error(w, fmt.Sprintf("target host cannot be empty for target: %s", target.Name), http.StatusBadRequest)
+			return
+		}
+		
+		// Validate port is a number and in valid range (1-65535)
+		port, err := strconv.Atoi(portStr)
+		if err != nil || port < 1 || port > 65535 {
+			http.Error(w, fmt.Sprintf("invalid port number (must be 1-65535) for target: %s", target.Name), http.StatusBadRequest)
+			return
+		}
+		
+		// Additional validation: check for common injection patterns
+		// Allow valid characters for hostnames and IP addresses
+		// Hostname regex: alphanumeric, dots, hyphens, brackets (for IPv6)
+		hostnameRegex := regexp.MustCompile(`^[a-zA-Z0-9.\-\[\]:]+$`)
+		if !hostnameRegex.MatchString(host) {
+			http.Error(w, fmt.Sprintf("invalid target host format for target: %s", target.Name), http.StatusBadRequest)
 			return
 		}
 	}
@@ -2450,6 +2606,13 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 						}
 					}
 					
+					// Get secret from database for authentication
+					var secret string
+					systemForAuth, _ := store.Get(clientID)
+					if systemForAuth != nil {
+						secret = systemForAuth.Secret
+					}
+					
 					var resp *http.Response
 					var err error
 					var successfulBaseURL string
@@ -2465,6 +2628,11 @@ func startTCPingPolling(registry *ClientRegistry, store *Store) {
 							continue
 						}
 						req.Header.Set("Content-Type", "application/json")
+						
+						// Security: Add secret to Authorization header if configured
+						if secret != "" {
+							req.Header.Set("Authorization", "Bearer "+secret)
+						}
 						
 						resp, err = tcpingHTTPClient.Do(req)
 						if err == nil && resp.StatusCode == http.StatusOK {
@@ -2566,13 +2734,31 @@ func startTCPingCleanup(store *Store) {
 var authTokens = make(map[string]time.Time)
 var authTokensMu sync.Mutex
 
-// Cleanup expired tokens every 5 minutes
+// Login attempt tracking for brute force protection
+type loginAttempt struct {
+	count     int
+	lastAttempt time.Time
+	lockedUntil time.Time
+}
+var loginAttempts = make(map[string]*loginAttempt) // key: IP address
+var loginAttemptsMu sync.RWMutex
+
+// Token verification attempt tracking
+type verifyAttempt struct {
+	count     int
+	lastAttempt time.Time
+}
+var verifyAttempts = make(map[string]*verifyAttempt) // key: IP address
+var verifyAttemptsMu sync.RWMutex
+
+// Cleanup expired tokens and login attempts every 5 minutes
 func init() {
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		for {
 			<-ticker.C
+			// Cleanup expired tokens
 			authTokensMu.Lock()
 			now := time.Now()
 			for token, expiry := range authTokens {
@@ -2581,6 +2767,24 @@ func init() {
 				}
 			}
 			authTokensMu.Unlock()
+			
+			// Cleanup old login attempts (older than 1 hour)
+			loginAttemptsMu.Lock()
+			for ip, attempt := range loginAttempts {
+				if time.Since(attempt.lastAttempt) > 1*time.Hour && attempt.count == 0 {
+					delete(loginAttempts, ip)
+				}
+			}
+			loginAttemptsMu.Unlock()
+			
+			// Cleanup old verify attempts (older than 5 minutes)
+			verifyAttemptsMu.Lock()
+			for ip, attempt := range verifyAttempts {
+				if time.Since(attempt.lastAttempt) > 5*time.Minute {
+					delete(verifyAttempts, ip)
+				}
+			}
+			verifyAttemptsMu.Unlock()
 		}
 	}()
 }
@@ -2617,8 +2821,14 @@ func handleAuthSetup(store *Store, w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
+	// SECURITY: Validate password length to prevent DoS attacks
+	// Bcrypt is computationally expensive, so limit password length
 	if len(payload.Password) < 6 {
 		http.Error(w, "password must be at least 6 characters", http.StatusBadRequest)
+		return
+	}
+	if len(payload.Password) > 128 {
+		http.Error(w, "password too long (max 128 characters)", http.StatusBadRequest)
 		return
 	}
 
@@ -2630,8 +2840,55 @@ func handleAuthSetup(store *Store, w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
+// getClientIP extracts the client IP address from the request
+func getClientIP(r *http.Request) string {
+	// 1. Check X-Forwarded-For header (for proxies/load balancers)
+	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
+		// X-Forwarded-For can contain multiple IPs, take the first one
+		ips := strings.Split(ip, ",")
+		if len(ips) > 0 {
+			return strings.TrimSpace(ips[0])
+		}
+	}
+	
+	// 2. Check X-Real-IP header (for nginx proxy)
+	if ip := r.Header.Get("X-Real-IP"); ip != "" {
+		return strings.TrimSpace(ip)
+	}
+	
+	// 3. Fall back to RemoteAddr
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 // handleAuthLogin authenticates and returns a token
 func handleAuthLogin(store *Store, w http.ResponseWriter, r *http.Request) {
+	// SECURITY: Rate limiting to prevent brute force attacks
+	clientIP := getClientIP(r)
+	loginAttemptsMu.Lock()
+	attempt, exists := loginAttempts[clientIP]
+	if !exists {
+		attempt = &loginAttempt{count: 0, lastAttempt: time.Now()}
+		loginAttempts[clientIP] = attempt
+	}
+	
+	// Check if IP is locked due to too many failed attempts
+	if time.Now().Before(attempt.lockedUntil) {
+		loginAttemptsMu.Unlock()
+		// Return same error message to avoid information disclosure
+		http.Error(w, "invalid password", http.StatusUnauthorized)
+		return
+	}
+	
+	// Reset count if last attempt was more than 15 minutes ago
+	if time.Since(attempt.lastAttempt) > 15*time.Minute {
+		attempt.count = 0
+	}
+	loginAttemptsMu.Unlock()
+	
 	var payload struct {
 		Password string `json:"password"`
 	}
@@ -2641,16 +2898,41 @@ func handleAuthLogin(store *Store, w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
+	// SECURITY: Validate password length to prevent DoS attacks
+	// Bcrypt is computationally expensive, so limit password length
+	if len(payload.Password) < 6 {
+		http.Error(w, "password must be at least 6 characters", http.StatusBadRequest)
+		return
+	}
+	if len(payload.Password) > 128 {
+		http.Error(w, "password too long (max 128 characters)", http.StatusBadRequest)
+		return
+	}
+
 	valid, err := store.VerifyPassword(payload.Password)
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
+	// Update attempt tracking
+	loginAttemptsMu.Lock()
+	attempt.lastAttempt = time.Now()
 	if !valid {
+		attempt.count++
+		// Lock IP after 5 failed attempts for 15 minutes
+		if attempt.count >= 5 {
+			attempt.lockedUntil = time.Now().Add(15 * time.Minute)
+		}
+		loginAttemptsMu.Unlock()
+		// Return same error message to avoid information disclosure
 		http.Error(w, "invalid password", http.StatusUnauthorized)
 		return
 	}
+	// Reset count on successful login
+	attempt.count = 0
+	attempt.lockedUntil = time.Time{}
+	loginAttemptsMu.Unlock()
 
 	// Generate token
 	token, err := GenerateAuthToken()
@@ -2672,6 +2954,31 @@ func handleAuthLogin(store *Store, w http.ResponseWriter, r *http.Request) {
 
 // handleAuthVerify verifies an auth token
 func handleAuthVerify(store *Store, w http.ResponseWriter, r *http.Request) {
+	// SECURITY: Rate limiting to prevent token enumeration attacks
+	clientIP := getClientIP(r)
+	verifyAttemptsMu.Lock()
+	attempt, exists := verifyAttempts[clientIP]
+	if !exists {
+		attempt = &verifyAttempt{count: 0, lastAttempt: time.Now()}
+		verifyAttempts[clientIP] = attempt
+	}
+	
+	// Reset count if last attempt was more than 1 minute ago
+	if time.Since(attempt.lastAttempt) > 1*time.Minute {
+		attempt.count = 0
+	}
+	
+	// Limit to 30 attempts per minute per IP
+	if attempt.count >= 30 {
+		verifyAttemptsMu.Unlock()
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
+	
+	attempt.count++
+	attempt.lastAttempt = time.Now()
+	verifyAttemptsMu.Unlock()
+	
 	var payload struct {
 		Token string `json:"token"`
 	}
@@ -2722,9 +3029,13 @@ func handleAuthChangePassword(store *Store, w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Validate new password
+	// SECURITY: Validate new password length to prevent DoS attacks
 	if len(payload.NewPassword) < 6 {
 		http.Error(w, "new password must be at least 6 characters", http.StatusBadRequest)
+		return
+	}
+	if len(payload.NewPassword) > 128 {
+		http.Error(w, "new password too long (max 128 characters)", http.StatusBadRequest)
 		return
 	}
 
@@ -2739,7 +3050,10 @@ func handleAuthChangePassword(store *Store, w http.ResponseWriter, r *http.Reque
 
 // isAuthenticated checks if request is authenticated
 func isAuthenticated(r *http.Request) bool {
-	// Check Authorization header
+	// SECURITY: Prefer Authorization header over query parameter
+	// Query parameters can leak tokens via logs, referer headers, etc.
+	
+	// Check Authorization header (preferred method)
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" {
 		if strings.HasPrefix(authHeader, "Bearer ") {
@@ -2753,7 +3067,13 @@ func isAuthenticated(r *http.Request) bool {
 		}
 	}
 
-	// Check token in query parameter (for backward compatibility)
+	// SECURITY: Query parameter support is kept for backward compatibility
+	// but should be deprecated. Tokens in query parameters can be leaked via:
+	// - Server access logs
+	// - Referer headers
+	// - Browser history
+	// - Proxy logs
+	// Consider removing this in future versions
 	token := r.URL.Query().Get("token")
 	if token != "" {
 		authTokensMu.Lock()

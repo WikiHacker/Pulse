@@ -128,6 +128,40 @@
     return getSystemLanguage();
   }
 
+  // SECURITY: Validate redirect parameter to prevent open redirect attacks
+  // Only allow relative paths (starting with /) and prevent protocol-relative or absolute URLs
+  function validateRedirect(redirect) {
+    if (!redirect || typeof redirect !== 'string') {
+      return '/admin';
+    }
+
+    // Trim whitespace
+    redirect = redirect.trim();
+
+    // Must start with / (relative path)
+    if (!redirect.startsWith('/')) {
+      return '/admin';
+    }
+
+    // Prevent protocol-relative URLs (//example.com)
+    if (redirect.startsWith('//')) {
+      return '/admin';
+    }
+
+    // Prevent any protocol (http:, https:, javascript:, etc.)
+    if (redirect.includes(':')) {
+      return '/admin';
+    }
+
+    // Prevent parent directory traversal (../)
+    if (redirect.includes('..')) {
+      return '/admin';
+    }
+
+    // Allow only safe relative paths
+    return redirect;
+  }
+
   function updateTranslations() {
     const lang = getCurrentLanguage();
     const t = translations[lang];
@@ -304,14 +338,15 @@
           // After setup, automatically login
           const loginResult = await login(password);
           if (loginResult) {
-            // Get redirect target from URL parameter or default to /admin
+            // SECURITY: Validate redirect parameter to prevent open redirect
             const urlParams = new URLSearchParams(window.location.search);
-            const redirect = urlParams.get('redirect') || '/admin';
+            const redirect = validateRedirect(urlParams.get('redirect') || '/admin');
             window.location.href = redirect;
           } else {
             // Setup succeeded but login failed, redirect anyway (shouldn't happen)
+            // SECURITY: Validate redirect parameter to prevent open redirect
             const urlParams = new URLSearchParams(window.location.search);
-            const redirect = urlParams.get('redirect') || '/admin';
+            const redirect = validateRedirect(urlParams.get('redirect') || '/admin');
             window.location.href = redirect;
           }
         } else {
@@ -323,9 +358,9 @@
         // Login
         const success = await login(password);
         if (success) {
-          // Get redirect target from URL parameter or default to /admin
+          // SECURITY: Validate redirect parameter to prevent open redirect
           const urlParams = new URLSearchParams(window.location.search);
-          const redirect = urlParams.get('redirect') || '/admin';
+          const redirect = validateRedirect(urlParams.get('redirect') || '/admin');
           window.location.href = redirect;
         } else {
           const lang = getCurrentLanguage();
