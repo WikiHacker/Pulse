@@ -2458,6 +2458,28 @@ const apiBase = apiBaseProp ?? '';
           // Fallback to data-index if not found
           draggedIndex = parseInt(item.dataset.index) || 0;
         }
+        
+        // Create a custom drag image that maintains the original size
+        // This prevents the row from appearing smaller during drag
+        const dragImage = item.cloneNode(true);
+        dragImage.style.position = 'absolute';
+        dragImage.style.top = '-9999px';
+        dragImage.style.left = '-9999px';
+        dragImage.style.width = item.offsetWidth + 'px';
+        dragImage.style.opacity = '0.8';
+        document.body.appendChild(dragImage);
+        
+        // Set custom drag image to maintain original size
+        const rect = item.getBoundingClientRect();
+        e.dataTransfer.setDragImage(dragImage, e.clientX - rect.left, e.clientY - rect.top);
+        
+        // Clean up the temporary drag image after a short delay
+        setTimeout(() => {
+          if (dragImage.parentNode) {
+            dragImage.parentNode.removeChild(dragImage);
+          }
+        }, 0);
+        
         item.classList.add('opacity-50');
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/html', item.outerHTML);

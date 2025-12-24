@@ -81,9 +81,13 @@ jobs:
           git config --local user.name "GitHub Action"
           # Force add binaries even if they're in .gitignore
           git add -f client/probe-client client/probe-client-arm64 client/probe-client.exe
+          # Only commit if there are actual changes (ignore if binaries are identical)
           if ! git diff --staged --quiet; then
-            git commit -m "chore: update client binaries [skip actions]"
-            git push
+            # Check if the changes are only in binary files (not source code)
+            if git diff --staged --name-only | grep -qE '^client/(probe-client|probe-client-arm64|probe-client\.exe)$'; then
+              git commit -m "chore: update client binaries [skip actions]"
+              git push
+            fi
           fi
 
       - name: Upload to Release

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -171,8 +172,9 @@ type ClientRegistry struct {
 }
 
 // IP to country cache
+// Special value "FAILED" is used to cache failed lookups to avoid repeated API calls
 type IPCountryCache struct {
-	cache map[string]string // key: IP, value: country
+	cache map[string]string // key: IP, value: country (or "FAILED" for failed lookups)
 	mu    sync.RWMutex
 }
 
@@ -186,6 +188,10 @@ func (c *IPCountryCache) Get(ip string) (string, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	country, exists := c.cache[ip]
+	if exists && country == "FAILED" {
+		// Return empty string for failed lookups, but indicate it was cached
+		return "", true
+	}
 	return country, exists
 }
 
@@ -193,6 +199,13 @@ func (c *IPCountryCache) Set(ip, country string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cache[ip] = country
+}
+
+// SetFailed marks an IP lookup as failed to avoid repeated API calls
+func (c *IPCountryCache) SetFailed(ip string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cache[ip] = "FAILED"
 }
 
 func NewClientRegistry() *ClientRegistry {
@@ -1624,17 +1637,49 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 		return false
 	}
 	
-	// Get location from IPv4 if not provided
-	if payload.Location == "" && payload.IPv4 != "" {
-		// Check cache first
-		if country, found := ipCache.Get(payload.IPv4); found {
-			payload.Location = country
-		} else {
-			// Query and cache
-			country := getCountryFromIP(payload.IPv4)
-			if country != "" {
-				ipCache.Set(payload.IPv4, country)
-				payload.Location = country
+	// Get location from IP if not provided
+	// Try IPv4 first, then IPv6 as fallback
+	if payload.Location == "" {
+		var country string
+		var found bool
+		
+		// Try IPv4 first
+		if payload.IPv4 != "" {
+			if country, found = ipCache.Get(payload.IPv4); found {
+				// Cache hit (including failed lookups)
+				if country != "" {
+					payload.Location = country
+				}
+			} else {
+				// Query and cache
+				country = getCountryFromIP(payload.IPv4)
+				if country != "" {
+					ipCache.Set(payload.IPv4, country)
+					payload.Location = country
+				} else {
+					// Cache the failure to avoid repeated API calls
+					ipCache.SetFailed(payload.IPv4)
+				}
+			}
+		}
+		
+		// If IPv4 lookup failed or IPv4 is empty, try IPv6
+		if payload.Location == "" && payload.IPv6 != "" {
+			if country, found = ipCache.Get(payload.IPv6); found {
+				// Cache hit (including failed lookups)
+				if country != "" {
+					payload.Location = country
+				}
+			} else {
+				// Query and cache
+				country = getCountryFromIP(payload.IPv6)
+				if country != "" {
+					ipCache.Set(payload.IPv6, country)
+					payload.Location = country
+				} else {
+					// Cache the failure to avoid repeated API calls
+					ipCache.SetFailed(payload.IPv6)
+				}
 			}
 		}
 	} else {
@@ -1719,11 +1764,88 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 	return true
 }
 
+// isPrivateIP checks if an IP address is a private/local address
+// Compatible with Go 1.15 (net.IP.IsPrivate() was added in Go 1.17)
+func isPrivateIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	
+	// Check IPv4 private ranges
+	if ip4 := ip.To4(); ip4 != nil {
+		// Loopback: 127.0.0.0/8
+		if ip4[0] == 127 {
+			return true
+		}
+		// Private: 10.0.0.0/8
+		if ip4[0] == 10 {
+			return true
+		}
+		// Private: 172.16.0.0/12 (includes 172.17.0.0/16 used by Docker)
+		if ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31 {
+			return true
+		}
+		// Private: 192.168.0.0/16
+		if ip4[0] == 192 && ip4[1] == 168 {
+			return true
+		}
+		// Link-local: 169.254.0.0/16
+		if ip4[0] == 169 && ip4[1] == 254 {
+			return true
+		}
+		// Multicast: 224.0.0.0/4
+		if ip4[0] >= 224 && ip4[0] <= 239 {
+			return true
+		}
+		return false
+	}
+	
+	// Check IPv6 private ranges
+	// Loopback: ::1
+	if ip.IsLoopback() {
+		return true
+	}
+	// Link-local: fe80::/10
+	if len(ip) >= 2 && ip[0] == 0xfe && (ip[1]&0xc0) == 0x80 {
+		return true
+	}
+	// Unique local: fc00::/7
+	if len(ip) > 0 && (ip[0] == 0xfc || ip[0] == 0xfd) {
+		return true
+	}
+	// Multicast: ff00::/8
+	if len(ip) > 0 && ip[0] == 0xff {
+		return true
+	}
+	// IPv4-mapped IPv6 addresses (::ffff:0:0/96) - check if mapped IPv4 is private
+	if len(ip) == 16 && ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0 &&
+		ip[4] == 0 && ip[5] == 0 && ip[6] == 0 && ip[7] == 0 &&
+		ip[8] == 0 && ip[9] == 0 && ip[10] == 0xff && ip[11] == 0xff {
+		// Extract IPv4 from IPv4-mapped IPv6
+		ipv4 := net.IP(ip[12:16])
+		return isPrivateIP(ipv4)
+	}
+	
+	return false
+}
+
 // Get country from IP address using free IP geolocation API
 // Uses multiple services with fallback for better reliability, especially for China
+// Includes retry mechanism and better error handling
 func getCountryFromIP(ip string) string {
-	if ip == "" || ip == "127.0.0.1" || strings.HasPrefix(ip, "192.168.") || strings.HasPrefix(ip, "10.") || strings.HasPrefix(ip, "172.") {
-		// Skip private/local IPs
+	if ip == "" {
+		return ""
+	}
+	
+	// Check if it's a private/local IP
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return ""
+	}
+	
+	// Skip private/local IPs (IPv4 and IPv6)
+	// Note: Go 1.15 doesn't have IsPrivate(), so we check manually
+	if isPrivateIP(parsedIP) {
 		return ""
 	}
 	
@@ -1818,34 +1940,73 @@ func getCountryFromIP(ip string) string {
 				return ""
 			},
 		},
+		{
+			// geojs.io (another alternative, works well globally)
+			url: fmt.Sprintf("https://get.geojs.io/v1/ip/country/%s", ip),
+			parser: func(resp *http.Response) string {
+				body, err := ioutil.ReadAll(resp.Body)
+				if err != nil {
+					return ""
+				}
+				country := strings.TrimSpace(string(body))
+				// geojs.io returns country code directly
+				if len(country) == 2 {
+					return strings.ToUpper(country)
+				}
+				return ""
+			},
+		},
 	}
 	
-	// Try each service with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	
+	// Try each service with retry mechanism
+	maxRetries := 2
 	for _, service := range services {
-		req, err := http.NewRequestWithContext(ctx, "GET", service.url, nil)
-		if err != nil {
-			continue
-		}
-		
-		req.Header.Set("User-Agent", "PulseMonitor/1.0")
-		req.Header.Set("Accept", "application/json")
-		
-		resp, err := httpClient.Do(req)
-		if err != nil {
-			continue
-		}
-		
-		if resp.StatusCode == http.StatusOK {
-			country := service.parser(resp)
-			resp.Body.Close()
-			if country != "" {
-				return country
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			// Use longer timeout for cross-continent networks (15 seconds)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			
+			req, err := http.NewRequestWithContext(ctx, "GET", service.url, nil)
+			if err != nil {
+				cancel()
+				break // Try next service
 			}
-		} else {
-			resp.Body.Close()
+			
+			req.Header.Set("User-Agent", "PulseMonitor/1.0")
+			req.Header.Set("Accept", "application/json")
+			
+			resp, err := httpClient.Do(req)
+			cancel()
+			
+			if err != nil {
+				// Network error - retry if not last attempt
+				if attempt < maxRetries-1 {
+					time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond) // Exponential backoff
+					continue
+				}
+				break // Try next service
+			}
+			
+			// Handle rate limiting (429 Too Many Requests)
+			if resp.StatusCode == http.StatusTooManyRequests {
+				resp.Body.Close()
+				// Wait a bit before trying next service
+				time.Sleep(1 * time.Second)
+				break // Try next service
+			}
+			
+			if resp.StatusCode == http.StatusOK {
+				country := service.parser(resp)
+				resp.Body.Close()
+				if country != "" {
+					return country
+				}
+				// If parsing failed but got 200, don't retry this service
+				break
+			} else {
+				resp.Body.Close()
+				// For non-200 status codes, try next service immediately
+				break
+			}
 		}
 	}
 	
