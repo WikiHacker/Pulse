@@ -211,7 +211,7 @@ show_status() {
     echo "  View logs:      journalctl -u ${SERVICE_NAME} -f"
     echo "  Restart:        systemctl restart ${SERVICE_NAME}"
     echo "  Stop:           systemctl stop ${SERVICE_NAME}"
-    echo "  Uninstall:      systemctl stop ${SERVICE_NAME} && systemctl disable ${SERVICE_NAME} && rm -rf ${INSTALL_DIR} /etc/systemd/system/${SERVICE_NAME}.service"
+    echo "  Uninstall:      systemctl stop ${SERVICE_NAME} && systemctl disable ${SERVICE_NAME} && rm -rf ${INSTALL_DIR}/${SERVICE_NAME} /etc/systemd/system/${SERVICE_NAME}.service"
     echo ""
 }
 
