@@ -3,15 +3,19 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/fs"
 	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -19,6 +23,27 @@ import (
 	"syscall"
 	"time"
 )
+
+//go:embed all:web/dist
+var webFiles embed.FS
+
+// Check if running in standalone mode (with embedded files) or Docker mode (with Nginx)
+func hasEmbeddedFiles() bool {
+	// Try to access the embedded FS
+	distFS, err := fs.Sub(webFiles, "web/dist")
+	if err != nil {
+		return false
+	}
+	// Check if index.html exists (real frontend files)
+	if _, err := distFS.Open("index.html"); err != nil {
+		return false
+	}
+	// Check if _astro directory exists (contains CSS/JS)
+	if entries, err := fs.ReadDir(distFS, "_astro"); err != nil || len(entries) == 0 {
+		return false
+	}
+	return true
+}
 
 type SystemMetric struct {
 	ID                 string    `json:"id"`
@@ -606,10 +631,93 @@ func main() {
 	// Start cleanup old tcping data every hour
 	go startTCPingCleanup(store)
 	
-	log.Printf("🌐 Backend listening on %s", addr)
+	// Check if running in standalone mode or Docker mode
+	standalone := hasEmbeddedFiles()
 	
-	// Apply middleware: CORS first, then CDN-friendly headers
-	handler := corsMiddleware(cdnFriendlyMiddleware(mux))
+	var handler http.Handler
+	
+	if standalone {
+		// Standalone mode: serve embedded static files
+		log.Printf("🌐 Server listening on %s (standalone mode with embedded frontend)", addr)
+		log.Printf("📁 Frontend files embedded from web/dist")
+		log.Printf("🎉 Access the dashboard at http://localhost%s", addr)
+		
+		distFS, err := fs.Sub(webFiles, "web/dist")
+		if err != nil {
+			log.Fatalf("❌ Failed to access embedded files: %v", err)
+		}
+		
+		// Create a handler that combines API routes and static files
+		finalHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Try API routes first
+			if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/healthz" {
+				mux.ServeHTTP(w, r)
+				return
+			}
+			
+			// Handle static files
+			path := strings.TrimPrefix(r.URL.Path, "/")
+			if path == "" {
+				path = "index.html"
+			}
+			
+			// Try to open the file from embedded FS
+			if f, err := distFS.Open(path); err == nil {
+				// File exists, serve it
+				f.Close()
+				http.FileServer(http.FS(distFS)).ServeHTTP(w, r)
+				return
+			}
+			
+			// File doesn't exist - try directory index.html
+			// For paths like /admin, /login, try opening admin/index.html, login/index.html
+			if filepath.Ext(path) == "" {
+				// Remove trailing slash if present
+				cleanPath := strings.TrimSuffix(path, "/")
+				indexPath := cleanPath + "/index.html"
+				
+				if f, err := distFS.Open(indexPath); err == nil {
+					// Directory index.html exists, read and serve it
+					defer f.Close()
+					content, err := io.ReadAll(f)
+					if err != nil {
+						http.Error(w, "failed to read file", http.StatusInternalServerError)
+						return
+					}
+					w.Header().Set("Content-Type", "text/html; charset=utf-8")
+					w.Write(content)
+					return
+				}
+				
+				// No directory index, serve root index.html for SPA routing
+				indexFile, err := distFS.Open("index.html")
+				if err != nil {
+					http.Error(w, "index.html not found", http.StatusNotFound)
+					return
+				}
+				defer indexFile.Close()
+				
+				content, err := io.ReadAll(indexFile)
+				if err != nil {
+					http.Error(w, "failed to read index.html", http.StatusInternalServerError)
+					return
+				}
+				
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Write(content)
+				return
+			}
+			
+			// File with extension not found
+			http.NotFound(w, r)
+		})
+		
+		handler = corsMiddleware(cdnFriendlyMiddleware(finalHandler))
+	} else {
+		// Docker mode: only serve API (Nginx handles static files)
+		log.Printf("🌐 Backend listening on %s (Docker mode - Nginx serves frontend)", addr)
+		handler = corsMiddleware(cdnFriendlyMiddleware(mux))
+	}
 	
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatalf("❌ Server stopped: %v", err)

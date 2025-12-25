@@ -30,11 +30,58 @@
 
 ## 🚀 服务端安装
 
-### Docker 部署（推荐）
+### 方式一：独立二进制部署（推荐新手和 VPS 用户）
+
+#### 一键安装
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse/main/install-pulse-server.sh | sudo bash
+```
+
+脚本会自动：
+- ✅ 检测系统架构
+- ✅ 下载对应的二进制文件
+- ✅ 配置 systemd 服务
+- ✅ 启动服务并设置开机自启
+
+#### 手动安装
+
+**Linux (amd64)**
+```bash
+# 下载
+wget https://github.com/xhhcn/Pulse/releases/latest/download/pulse-server-standalone-linux-amd64
+chmod +x pulse-server-standalone-linux-amd64
+
+# 运行
+./pulse-server-standalone-linux-amd64
+```
+
+**Linux (arm64)**
+```bash
+# 下载
+wget https://github.com/xhhcn/Pulse/releases/latest/download/pulse-server-standalone-linux-arm64
+chmod +x pulse-server-standalone-linux-arm64
+
+# 运行
+./pulse-server-standalone-linux-arm64
+```
+
+访问 `http://YOUR_IP:8008` 查看监控面板
+
+> **特点**：
+> - 🎯 单文件部署，前端已嵌入
+> - ⚡ 启动速度快（<1秒）
+> - 💾 仅 6MB 大小
+> - 🚫 无需 Docker、Nginx
+> - 📖 详细文档: [STANDALONE_DEPLOYMENT.md](STANDALONE_DEPLOYMENT.md)
+
+---
+
+### 方式二：Docker 部署（推荐生产环境）
 
 [![Docker](https://img.shields.io/badge/Docker-xhh1128/pulse-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://hub.docker.com/r/xhh1128/pulse)
 
-#### 方式一：Docker Compose（推荐）
+#### Docker Compose
 
 ```bash
 mkdir pulse && cd pulse
@@ -44,7 +91,7 @@ docker compose up -d
 
 > **IPv6 支持**：如果您的服务器需要 IPv6 支持，请参考下方的 [Docker IPv6 配置](#docker-ipv6-配置) 章节。
 
-#### 方式二：Docker Run
+#### Docker Run
 
 ```bash
 docker run -d \

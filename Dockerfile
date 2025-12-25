@@ -8,6 +8,8 @@ WORKDIR /build
 COPY server/go.mod server/go.sum ./
 RUN go mod download
 COPY server/*.go ./
+# Create empty web/dist directory for embed (actual files served by Nginx in Docker mode)
+RUN mkdir -p web/dist && touch web/dist/.gitkeep
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o probe-server .
 
 # Stage 2: Build frontend

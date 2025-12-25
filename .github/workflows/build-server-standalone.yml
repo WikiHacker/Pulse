@@ -1,0 +1,135 @@
+name: Build Server Standalone Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g., v1.2.4)'
+        required: true
+        type: string
+
+jobs:
+  build-server-standalone:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if server files exist in tag
+        id: check_server_files
+        run: |
+          if git ls-tree -r --name-only HEAD | grep -qE '^(server/)'; then
+            echo "server_files_exist=true" >> $GITHUB_OUTPUT
+            echo "Server files found in tag"
+          else
+            echo "server_files_exist=false" >> $GITHUB_OUTPUT
+            echo "No server files found in tag"
+          fi
+      
+      - name: Skip if no server files
+        if: steps.check_server_files.outputs.server_files_exist != 'true'
+        run: |
+          echo "No server files in this tag, skipping build"
+          exit 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build Frontend
+        run: |
+          cd server/web
+          npm ci
+          npm run build
+          echo "✅ Frontend built successfully"
+          ls -lh dist/
+
+      - name: Build Server Standalone Binaries
+        run: |
+          cd server
+          echo "🔨 Building standalone server binaries with embedded frontend..."
+          
+          # Linux amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o pulse-server-standalone-linux-amd64 main.go store.go init_data.go
+          chmod +x pulse-server-standalone-linux-amd64
+          echo "✅ Built: pulse-server-standalone-linux-amd64 ($(du -h pulse-server-standalone-linux-amd64 | cut -f1))"
+          
+          # Linux arm64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o pulse-server-standalone-linux-arm64 main.go store.go init_data.go
+          chmod +x pulse-server-standalone-linux-arm64
+          echo "✅ Built: pulse-server-standalone-linux-arm64 ($(du -h pulse-server-standalone-linux-arm64 | cut -f1))"
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release v${{ steps.version.outputs.version }}
+          files: |
+            server/pulse-server-standalone-linux-amd64
+            server/pulse-server-standalone-linux-arm64
+            install-pulse-server.sh
+          body: |
+            ## 🚀 Pulse Server Standalone Binaries v${{ steps.version.outputs.version }}
+
+            ### 📦 Standalone Binary Deployment (NEW!)
+            
+            **One-line Installation:**
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse/main/install-pulse-server.sh | sudo bash
+            ```
+            
+            **Manual Installation:**
+            ```bash
+            # Download for your platform
+            wget https://github.com/xhhcn/Pulse/releases/download/v${{ steps.version.outputs.version }}/pulse-server-standalone-linux-amd64
+            chmod +x pulse-server-standalone-linux-amd64
+            ./pulse-server-standalone-linux-amd64
+            
+            # Access dashboard at http://your-server:8008
+            ```
+
+            ### 📥 Downloads
+
+            | Platform | File | Size |
+            |----------|------|------|
+            | **Linux amd64** | pulse-server-standalone-linux-amd64 | ~6.1 MB |
+            | **Linux arm64** | pulse-server-standalone-linux-arm64 | ~5.9 MB |
+            | **Install Script** | install-pulse-server.sh | Automated setup |
+
+            ### ✨ Features
+
+            - ✅ **Zero Dependencies** - No Docker, Nginx, or Node.js required
+            - ✅ **Embedded Frontend** - Complete web UI included in binary
+            - ✅ **Small Size** - Only 6MB for full functionality
+            - ✅ **Fast Startup** - Starts in under 1 second
+            - ✅ **Easy Deployment** - Single file, copy and run
+            - ✅ **Systemd Support** - Use the install script for automatic service setup
+
+            ### 📚 Documentation
+
+            See [STANDALONE_DEPLOYMENT.md](https://github.com/xhhcn/Pulse/blob/main/STANDALONE_DEPLOYMENT.md) for detailed deployment guide.
+
+          draft: false
+          prerelease: false
+

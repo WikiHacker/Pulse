@@ -30,11 +30,58 @@
 
 ## 🚀 Server Installation
 
-### Docker Deployment (Recommended)
+### Method 1: Standalone Binary Deployment (Recommended for VPS)
+
+#### One-line Installation
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse/main/install-pulse-server.sh | sudo bash
+```
+
+The script will automatically:
+- ✅ Detect system architecture
+- ✅ Download the appropriate binary
+- ✅ Configure systemd service
+- ✅ Start service and enable auto-start
+
+#### Manual Installation
+
+**Linux (amd64)**
+```bash
+# Download
+wget https://github.com/xhhcn/Pulse/releases/latest/download/pulse-server-standalone-linux-amd64
+chmod +x pulse-server-standalone-linux-amd64
+
+# Run
+./pulse-server-standalone-linux-amd64
+```
+
+**Linux (arm64)**
+```bash
+# Download
+wget https://github.com/xhhcn/Pulse/releases/latest/download/pulse-server-standalone-linux-arm64
+chmod +x pulse-server-standalone-linux-arm64
+
+# Run
+./pulse-server-standalone-linux-arm64
+```
+
+Access `http://YOUR_IP:8008` to view the monitoring dashboard
+
+> **Features**:
+> - 🎯 Single-file deployment with embedded frontend
+> - ⚡ Fast startup (<1 second)
+> - 💾 Only 6MB size
+> - 🚫 No Docker, Nginx required
+> - 📖 Detailed guide: [STANDALONE_DEPLOYMENT.md](STANDALONE_DEPLOYMENT.md)
+
+---
+
+### Method 2: Docker Deployment (Recommended for Production)
 
 [![Docker](https://img.shields.io/badge/Docker-xhh1128/pulse-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://hub.docker.com/r/xhh1128/pulse)
 
-#### Method 1: Docker Compose (Recommended)
+#### Docker Compose
 
 ```bash
 mkdir pulse && cd pulse
@@ -44,7 +91,7 @@ docker compose up -d
 
 > **IPv6 Support**: If your server requires IPv6 support, please refer to the [Docker IPv6 Configuration](#docker-ipv6-configuration) section below.
 
-#### Method 2: Docker Run
+#### Docker Run
 
 ```bash
 docker run -d \
