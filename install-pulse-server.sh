@@ -73,36 +73,7 @@ fi
 chmod +x "$INSTALL_DIR/pulse-server"
 print_message "$GREEN" "✅ Binary downloaded and made executable"
 
-# Create log directory first
-print_message "$YELLOW" "📁 Creating log directory..."
-mkdir -p /var/log/pulse-server
-chmod 750 /var/log/pulse-server
-
-# Configure log rotation
-print_message "$YELLOW" "📝 Configuring log rotation..."
-cat > /etc/logrotate.d/$SERVICE_NAME << 'EOF'
-/var/log/pulse-server/*.log {
-    daily
-    rotate 14
-    maxsize 100M
-    missingok
-    notifempty
-    compress
-    delaycompress
-    copytruncate
-    create 0640 root root
-    sharedscripts
-}
-EOF
-
-# Test logrotate configuration
-if logrotate -d /etc/logrotate.d/$SERVICE_NAME >/dev/null 2>&1; then
-    print_message "$GREEN" "✅ Log rotation configured (max 100MB per file, 14 days retention)"
-else
-    print_message "$YELLOW" "⚠️  Log rotation config created but validation failed (non-critical)"
-fi
-
-# Create systemd service with log management
+# Create systemd service
 print_message "$YELLOW" "⚙️  Creating systemd service..."
 cat > /etc/systemd/system/$SERVICE_NAME.service << EOF
 [Unit]
@@ -117,10 +88,9 @@ ExecStart=$INSTALL_DIR/pulse-server
 Restart=always
 RestartSec=5
 Environment="PORT=8008"
-# Log configuration - redirect to file for logrotate management
-StandardOutput=append:/var/log/pulse-server/pulse-server.log
-StandardError=append:/var/log/pulse-server/pulse-server.log
-# Also send to journal for systemctl status
+# Log to systemd journal (auto-managed)
+StandardOutput=journal
+StandardError=journal
 SyslogIdentifier=pulse-server
 
 [Install]
@@ -129,7 +99,7 @@ EOF
 
 # Reload systemd
 systemctl daemon-reload
-print_message "$GREEN" "✅ Systemd service created with log management"
+print_message "$GREEN" "✅ Systemd service created"
 
 # Start service
 print_message "$YELLOW" "🚀 Starting Pulse Server..."
@@ -158,21 +128,15 @@ if systemctl is-active --quiet $SERVICE_NAME; then
     print_message "$GREEN" "   sudo systemctl status $SERVICE_NAME   # Check status"
     print_message "$GREEN" "   sudo systemctl stop $SERVICE_NAME     # Stop service"
     print_message "$GREEN" "   sudo systemctl restart $SERVICE_NAME  # Restart service"
-    print_message "$GREEN" "   sudo tail -f /var/log/pulse-server/pulse-server.log  # View logs (live)"
-    print_message "$GREEN" "   sudo du -sh /var/log/pulse-server/    # Check log size"
+    print_message "$GREEN" "   sudo journalctl -u $SERVICE_NAME -f   # View logs (live)"
     echo ""
     print_message "$YELLOW" "📁 Installation directory: $INSTALL_DIR"
     print_message "$YELLOW" "💾 Data directory: $INSTALL_DIR/data"
-    print_message "$YELLOW" "📝 Log management:"
-    print_message "$GREEN" "   Logs are auto-rotated: 100MB per file, 14 daily rotations (max ~1.4GB total)"
-    print_message "$GREEN" "   Location: /var/log/pulse-server/pulse-server.log"
-    print_message "$GREEN" "   Rotated logs: /var/log/pulse-server/pulse-server.log.*.gz"
     echo ""
     print_message "$YELLOW" "🗑️  Uninstall:"
     print_message "$GREEN" "   sudo systemctl stop $SERVICE_NAME && sudo systemctl disable $SERVICE_NAME"
     print_message "$GREEN" "   sudo rm -f $INSTALL_DIR/pulse-server /etc/systemd/system/$SERVICE_NAME.service"
-    print_message "$GREEN" "   sudo rm -f /etc/logrotate.d/$SERVICE_NAME"
-    print_message "$GREEN" "   sudo rm -rf $INSTALL_DIR/data /var/log/pulse-server && sudo systemctl daemon-reload"
+    print_message "$GREEN" "   sudo rm -rf $INSTALL_DIR/data && sudo systemctl daemon-reload"
     echo ""
     print_message "$GREEN" "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 else
