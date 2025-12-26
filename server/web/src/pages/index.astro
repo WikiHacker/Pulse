@@ -84,6 +84,31 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
             if (config) {
               // Store config for NavBar component to use
               window.__navbarConfig = config;
+              // Update page title with navbar text
+              if (config.text) {
+                document.title = config.text;
+              }
+              // Update favicon with custom logo
+              if (config.logo) {
+                const favicon = document.querySelector('link[rel="icon"]');
+                if (favicon) {
+                  favicon.href = config.logo;
+                  // Auto-detect image type based on URL extension
+                  const ext = config.logo.toLowerCase().split('.').pop().split('?')[0];
+                  if (ext === 'svg') {
+                    favicon.type = 'image/svg+xml';
+                  } else if (ext === 'png') {
+                    favicon.type = 'image/png';
+                  } else if (ext === 'jpg' || ext === 'jpeg') {
+                    favicon.type = 'image/jpeg';
+                  } else if (ext === 'ico') {
+                    favicon.type = 'image/x-icon';
+                  } else {
+                    // Remove type attribute to let browser auto-detect
+                    favicon.removeAttribute('type');
+                  }
+                }
+              }
               // Dispatch event when config is ready
               window.dispatchEvent(new CustomEvent('navbarconfigready', { detail: config }));
             }
