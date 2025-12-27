@@ -2394,10 +2394,12 @@ const apiBase = apiBaseProp ?? '';
     }
     
     if (lossElement) {
-      if (packetLossRate > 0) {
+      // Only show loss percentage if there's actual data (avgLatency > 0)
+      // When avgLatency is 0, it means no data, so show '-' instead of '0.00%'
+      if (avgLatency > 0) {
         lossElement.textContent = `${packetLossRate.toFixed(2)}%`;
       } else {
-        lossElement.textContent = '0.00%';
+        lossElement.textContent = '-';
       }
     }
   }
