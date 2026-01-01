@@ -24,6 +24,25 @@ import (
 	netutil "github.com/shirou/gopsutil/v3/net"
 )
 
+// tcpKeepAliveListener wraps a TCPListener to enable TCP keepalive on all accepted connections
+// This is critical for Windows to prevent TCP connections from being dropped by firewalls/NAT devices
+type tcpKeepAliveListener struct {
+	*net.TCPListener
+}
+
+// Accept accepts a connection and enables TCP keepalive with a 60-second interval
+func (ln tcpKeepAliveListener) Accept() (net.Conn, error) {
+	tc, err := ln.AcceptTCP()
+	if err != nil {
+		return nil, err
+	}
+	// Enable TCP keepalive with 60-second interval
+	// This prevents Windows firewalls/NAT from dropping idle connections
+	tc.SetKeepAlive(true)
+	tc.SetKeepAlivePeriod(60 * time.Second)
+	return tc, nil
+}
+
 type metricPayload struct {
 	ID                 string  `json:"id"`
 	Name               string  `json:"name"`
@@ -101,7 +120,28 @@ func main() {
 	addr := ":" + clientPort
 	log.Printf("📡 Client listening on %s", addr)
 
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	// Create HTTP server with proper timeouts and keepalive settings
+	// This is critical for Windows to prevent connections from being dropped by firewalls/NAT
+	server := &http.Server{
+		Addr:           addr,
+		Handler:        mux,
+		ReadTimeout:    30 * time.Second,  // Timeout for reading the entire request (including body)
+		WriteTimeout:   30 * time.Second,  // Timeout for writing the response
+		IdleTimeout:    120 * time.Second, // Keepalive timeout for idle connections (critical for Windows)
+		MaxHeaderBytes: 1 << 20,           // 1 MB max header size
+	}
+
+	// Create custom listener with TCP keepalive enabled
+	// This is critical for Windows to prevent TCP connections from being dropped by firewalls/NAT
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("❌ Failed to create listener: %v", err)
+	}
+
+	// Wrap listener to enable TCP keepalive on all accepted connections
+	tcpListener := &tcpKeepAliveListener{listener.(*net.TCPListener)}
+
+	if err := server.Serve(tcpListener); err != nil {
 		log.Fatalf("❌ Failed to start client server: %v", err)
 	}
 }
