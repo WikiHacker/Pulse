@@ -25,7 +25,7 @@ import (
 )
 
 // tcpKeepAliveListener wraps a TCPListener to enable TCP keepalive on all accepted connections
-// This is critical for Windows to prevent TCP connections from being dropped by firewalls/NAT devices
+// This is CRITICAL for Windows: prevents server→client connections from being dropped by firewall/NAT
 type tcpKeepAliveListener struct {
 	*net.TCPListener
 }
@@ -37,7 +37,8 @@ func (ln tcpKeepAliveListener) Accept() (net.Conn, error) {
 		return nil, err
 	}
 	// Enable TCP keepalive with 60-second interval
-	// This prevents Windows firewalls/NAT from dropping idle connections
+	// Windows firewall typically drops idle connections after 60-120 seconds
+	// By sending keepalive probes every 60 seconds, we prevent disconnections
 	tc.SetKeepAlive(true)
 	tc.SetKeepAlivePeriod(60 * time.Second)
 	return tc, nil
@@ -121,24 +122,25 @@ func main() {
 	log.Printf("📡 Client listening on %s", addr)
 
 	// Create HTTP server with proper timeouts and keepalive settings
-	// This is critical for Windows to prevent connections from being dropped by firewalls/NAT
+	// This is CRITICAL for Windows: prevents server→client connections from being dropped by firewall/NAT
 	server := &http.Server{
 		Addr:           addr,
 		Handler:        mux,
 		ReadTimeout:    30 * time.Second,  // Timeout for reading the entire request (including body)
 		WriteTimeout:   30 * time.Second,  // Timeout for writing the response
-		IdleTimeout:    120 * time.Second, // Keepalive timeout for idle connections (critical for Windows)
-		MaxHeaderBytes: 1 << 20,           // 1 MB max header size
+		IdleTimeout:    120 * time.Second, // Keep idle connections alive (HTTP level)
+		MaxHeaderBytes: 1 << 20,           // 1 MB max header size (security)
 	}
 
 	// Create custom listener with TCP keepalive enabled
-	// This is critical for Windows to prevent TCP connections from being dropped by firewalls/NAT
+	// This is CRITICAL for Windows: prevents server→client connections from being dropped by firewall/NAT
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("❌ Failed to create listener: %v", err)
 	}
 
-	// Wrap listener to enable TCP keepalive on all accepted connections
+	// Wrap listener to enable TCP keepalive (60s) on all accepted connections
+	// This solves the Windows auto-disconnect issue
 	tcpListener := &tcpKeepAliveListener{listener.(*net.TCPListener)}
 
 	log.Printf("✅ TCP keepalive enabled (60s interval) for Windows compatibility")
@@ -162,7 +164,7 @@ func getSharedHTTPClient() *http.Client {
 			Transport: &http.Transport{
 				DialContext: (&net.Dialer{
 					Timeout:   15 * time.Second, // Increased to 15s for slow connections (DNS + TCP)
-					KeepAlive: 60 * time.Second,  // 60s keep-alive to prevent Windows firewall timeout
+					KeepAlive: 120 * time.Second, // Longer keep-alive for connection reuse
 				}).DialContext,
 				MaxIdleConns:            50,                 // More idle connections for better reuse
 				MaxIdleConnsPerHost:     20,                 // More per-host connections
