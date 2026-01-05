@@ -162,7 +162,7 @@ func getSharedHTTPClient() *http.Client {
 			Transport: &http.Transport{
 				DialContext: (&net.Dialer{
 					Timeout:   15 * time.Second, // Increased to 15s for slow connections (DNS + TCP)
-					KeepAlive: 120 * time.Second, // Longer keep-alive for connection reuse
+					KeepAlive: 60 * time.Second,  // 60s keep-alive to prevent Windows firewall timeout
 				}).DialContext,
 				MaxIdleConns:            50,                 // More idle connections for better reuse
 				MaxIdleConnsPerHost:     20,                 // More per-host connections
