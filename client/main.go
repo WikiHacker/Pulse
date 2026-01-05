@@ -141,6 +141,8 @@ func main() {
 	// Wrap listener to enable TCP keepalive on all accepted connections
 	tcpListener := &tcpKeepAliveListener{listener.(*net.TCPListener)}
 
+	log.Printf("✅ TCP keepalive enabled (60s interval) for Windows compatibility")
+
 	if err := server.Serve(tcpListener); err != nil {
 		log.Fatalf("❌ Failed to start client server: %v", err)
 	}
