@@ -590,8 +590,8 @@ func getSharedHTTPClient() *http.Client {
 		// Create a shared HTTP client with optimized connection pooling for cross-continent networks
 		// Configure DialContext to support both IPv4 and IPv6
 		dialer := &net.Dialer{
-			Timeout:   10 * time.Second,  // Increased from 5s to 10s for slow connections
-			KeepAlive: 120 * time.Second, // Longer keep-alive for connection reuse (like LAN)
+			Timeout:   10 * time.Second, // Increased from 5s to 10s for slow connections
+			KeepAlive: 60 * time.Second, // CRITICAL for Windows: prevent firewall from dropping idle connections (Windows timeout: 60-120s)
 		}
 
 		// Create custom DialContext that supports IPv6

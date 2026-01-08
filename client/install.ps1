@@ -184,7 +184,7 @@ function Add-FirewallRule {
     }
 }
 
-# Create startup script
+# Create startup script with auto-restart loop (like Linux systemd Restart=always)
 function New-StartupScript {
     $scriptContent = @"
 @echo off
@@ -199,11 +199,21 @@ set CLIENT_PORT=$($script:ClientPort)
         $scriptContent += "`nset SECRET=$($script:Secret)"
     }
     
-    $scriptContent += "`nprobe-client.exe"
+    # Add infinite restart loop to match Linux behavior (Restart=always)
+    $scriptContent += @"
+
+:restart
+echo [%date% %time%] Starting Pulse client...
+probe-client.exe
+echo [%date% %time%] Pulse client exited with code %errorlevel%
+echo [%date% %time%] Restarting in 10 seconds...
+timeout /t 10 /nobreak >nul
+goto restart
+"@
     
     $scriptPath = "$InstallDir\start-pulse.bat"
     Set-Content -Path $scriptPath -Value $scriptContent -Encoding ASCII
-    Write-Success "Created startup script: $scriptPath"
+    Write-Success "Created startup script with auto-restart: $scriptPath"
 }
 
 # Create scheduled task to run at startup
@@ -226,8 +236,9 @@ function New-ScheduledTaskService {
     # Create principal to run as SYSTEM
     $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
     
-    # Create settings
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+    # Create settings - NO restart limit (like Linux systemd Restart=always)
+    # ExecutionTimeLimit = 0 means no time limit, task runs indefinitely
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)
     
     # Register the task
     Register-ScheduledTask -TaskName $ServiceName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "Pulse Monitoring Client" | Out-Null
