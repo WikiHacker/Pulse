@@ -707,68 +707,68 @@ func detectLinuxDistro() string {
 func getOSIcon(osName string) string {
 	osLower := strings.ToLower(osName)
 	
-	// Priority: devicon (colored) > logos (colored) > use generic linux icon
+	// ICON POLICY: Only Ubuntu and Windows use "logos:" prefix, all other systems use "devicon:"
 	// Debian-based distributions
 	if strings.Contains(osLower, "ubuntu") {
-		return "logos:ubuntu" // Colored Ubuntu logo
+		return "logos:ubuntu" // Ubuntu: use logos (as per policy)
 	} else if strings.Contains(osLower, "pop") {
-		return "logos:pop-os" // Colored Pop!_OS logo
+		return "devicon:linux" // Pop!_OS: no specific devicon, use generic
 	} else if strings.Contains(osLower, "mint") {
-		return "logos:linux-mint" // Colored Linux Mint logo
+		return "devicon:linux" // Linux Mint: no specific devicon, use generic
 	} else if strings.Contains(osLower, "elementary") {
-		return "logos:elementary" // Elementary OS logo
+		return "devicon:linux" // Elementary OS: no specific devicon, use generic
 	} else if strings.Contains(osLower, "zorin") {
-		return "devicon:linux" // No colored icon available, use generic
+		return "devicon:linux" // Zorin OS: no specific devicon, use generic
 	} else if strings.Contains(osLower, "kali") {
-		return "logos:kalilinux" // Kali Linux logo
+		return "devicon:linux" // Kali Linux: no specific devicon, use generic
 	} else if strings.Contains(osLower, "parrot") {
-		return "devicon:linux" // No colored icon available, use generic
+		return "devicon:linux" // Parrot OS: no specific devicon, use generic
 	} else if strings.Contains(osLower, "debian") {
-		return "logos:debian" // Colored Debian logo
+		return "devicon:debian" // Debian: use devicon
 	
 	// Arch-based distributions
 	} else if strings.Contains(osLower, "manjaro") {
-		return "logos:manjaro" // Colored Manjaro logo
+		return "devicon:linux" // Manjaro: no specific devicon, use generic
 	} else if strings.Contains(osLower, "endeavour") {
-		return "devicon:archlinux" // Use Arch logo as fallback
+		return "devicon:archlinux" // EndeavourOS: use Arch logo
 	} else if strings.Contains(osLower, "garuda") {
-		return "devicon:archlinux" // Use Arch logo as fallback
+		return "devicon:archlinux" // Garuda: use Arch logo
 	} else if strings.Contains(osLower, "arch") {
-		return "logos:archlinux" // Colored Arch Linux logo
+		return "devicon:archlinux" // Arch Linux: use devicon
 	
 	// Red Hat-based distributions
 	} else if strings.Contains(osLower, "rocky") {
-		return "logos:rockylinux" // Colored Rocky Linux logo
+		return "devicon:rockylinux" // Rocky Linux: use devicon
 	} else if strings.Contains(osLower, "alma") {
-		return "logos:almalinux" // Colored AlmaLinux logo
+		return "devicon:almalinux" // AlmaLinux: use devicon (FIXED!)
 	} else if strings.Contains(osLower, "centos") {
-		return "logos:centos" // Colored CentOS logo
+		return "devicon:centos" // CentOS: use devicon
 	} else if strings.Contains(osLower, "red hat") || strings.Contains(osLower, "rhel") {
-		return "logos:redhat" // Colored Red Hat logo
+		return "devicon:redhat" // Red Hat: use devicon
 	} else if strings.Contains(osLower, "oracle") {
-		return "devicon:oracle" // Oracle logo (from devicon)
+		return "devicon:oracle" // Oracle Linux: use devicon
 	} else if strings.Contains(osLower, "fedora") {
-		return "logos:fedora" // Colored Fedora logo
+		return "devicon:fedora" // Fedora: use devicon
 	
 	// Independent distributions
 	} else if strings.Contains(osLower, "opensuse") || strings.Contains(osLower, "suse") {
-		return "logos:suse" // Colored SUSE logo
+		return "devicon:opensuse" // openSUSE: use devicon
 	} else if strings.Contains(osLower, "alpine") {
-		return "logos:alpine" // Colored Alpine logo
+		return "devicon:linux" // Alpine: no specific devicon, use generic
 	} else if strings.Contains(osLower, "gentoo") {
-		return "logos:gentoo" // Colored Gentoo logo
+		return "devicon:gentoo" // Gentoo: use devicon
 	} else if strings.Contains(osLower, "void") {
-		return "devicon:linux" // No colored icon available, use generic
+		return "devicon:linux" // Void Linux: no specific devicon, use generic
 	} else if strings.Contains(osLower, "slackware") {
-		return "logos:slackware" // Colored Slackware logo
+		return "devicon:linux" // Slackware: no specific devicon, use generic
 	} else if strings.Contains(osLower, "nixos") {
-		return "logos:nixos" // Colored NixOS logo
+		return "devicon:nixos" // NixOS: use devicon
 	} else if strings.Contains(osLower, "solus") {
-		return "devicon:linux" // No colored icon available, use generic
+		return "devicon:linux" // Solus: no specific devicon, use generic
 	} else if strings.Contains(osLower, "mageia") {
-		return "devicon:linux" // No colored icon available, use generic
+		return "devicon:linux" // Mageia: no specific devicon, use generic
 	} else if strings.Contains(osLower, "clear") {
-		return "devicon:linux" // No colored icon available, use generic
+		return "devicon:linux" // Clear Linux: no specific devicon, use generic
 	}
 	
 	// Default Linux icon (Tux)
