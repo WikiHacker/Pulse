@@ -52,6 +52,30 @@ The script will automatically:
 - ✅ Configure systemd service
 - ✅ Start service and enable auto-start
 
+#### Update Server
+
+**amd64:**
+```bash
+sudo systemctl stop pulse-server && sudo wget https://github.com/xhhcn/Pulse/releases/latest/download/pulse-server-standalone-linux-amd64 -O /opt/pulse/pulse-server && sudo chmod +x /opt/pulse/pulse-server && sudo systemctl start pulse-server
+```
+
+**arm64:**
+```bash
+sudo systemctl stop pulse-server && sudo wget https://github.com/xhhcn/Pulse/releases/latest/download/pulse-server-standalone-linux-arm64 -O /opt/pulse/pulse-server && sudo chmod +x /opt/pulse/pulse-server && sudo systemctl start pulse-server
+```
+
+#### Uninstall Server
+
+**Remove program only (keep data):**
+```bash
+sudo systemctl stop pulse-server && sudo systemctl disable pulse-server && sudo rm -f /etc/systemd/system/pulse-server.service /opt/pulse/pulse-server && sudo systemctl daemon-reload
+```
+
+**Complete removal (including data):**
+```bash
+sudo systemctl stop pulse-server && sudo systemctl disable pulse-server && sudo rm -f /etc/systemd/system/pulse-server.service && sudo rm -rf /opt/pulse && sudo systemctl daemon-reload
+```
+
 #### Manual Installation
 
 **Linux (amd64)**
@@ -217,6 +241,18 @@ powershell -ExecutionPolicy Bypass -Command "& { $env:AgentId='<ID>'; $env:Serve
 | `<SECRET>` | Authentication secret (auto-generated after adding system in admin panel, viewable in system details) |
 
 > **Note**: The `--secret` parameter is optional. If the server system is configured with a secret, you must provide the correct secret to register successfully.
+
+### Uninstall Client
+
+**Linux:**
+```bash
+sudo systemctl stop probe-client && sudo systemctl disable probe-client && sudo rm -f /etc/systemd/system/probe-client.service /usr/local/bin/probe-client && sudo systemctl daemon-reload
+```
+
+**Windows (Administrator PowerShell):**
+```powershell
+Stop-ScheduledTask -TaskName 'PulseClient' -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName 'PulseClient' -Confirm:$false -ErrorAction SilentlyContinue; Remove-NetFirewallRule -DisplayName 'Pulse Monitoring Client*' -ErrorAction SilentlyContinue; Remove-Item -Path "$env:ProgramFiles\Pulse" -Recurse -Force -ErrorAction SilentlyContinue
+```
 
 ---
 

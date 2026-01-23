@@ -52,6 +52,30 @@ curl -fsSL https://raw.githubusercontent.com/xhhcn/Pulse/main/install-pulse-serv
 - ✅ 配置 systemd 服务
 - ✅ 启动服务并设置开机自启
 
+#### 更新服务端
+
+**amd64:**
+```bash
+sudo systemctl stop pulse-server && sudo wget https://github.com/xhhcn/Pulse/releases/latest/download/pulse-server-standalone-linux-amd64 -O /opt/pulse/pulse-server && sudo chmod +x /opt/pulse/pulse-server && sudo systemctl start pulse-server
+```
+
+**arm64:**
+```bash
+sudo systemctl stop pulse-server && sudo wget https://github.com/xhhcn/Pulse/releases/latest/download/pulse-server-standalone-linux-arm64 -O /opt/pulse/pulse-server && sudo chmod +x /opt/pulse/pulse-server && sudo systemctl start pulse-server
+```
+
+#### 卸载服务端
+
+**仅删除程序（保留数据）:**
+```bash
+sudo systemctl stop pulse-server && sudo systemctl disable pulse-server && sudo rm -f /etc/systemd/system/pulse-server.service /opt/pulse/pulse-server && sudo systemctl daemon-reload
+```
+
+**完全删除（包括数据）:**
+```bash
+sudo systemctl stop pulse-server && sudo systemctl disable pulse-server && sudo rm -f /etc/systemd/system/pulse-server.service && sudo rm -rf /opt/pulse && sudo systemctl daemon-reload
+```
+
 #### 手动安装
 
 **Linux (amd64)**
@@ -217,6 +241,18 @@ powershell -ExecutionPolicy Bypass -Command "& { $env:AgentId='<ID>'; $env:Serve
 | `<SECRET>` | 认证密钥（在管理后台添加系统后自动生成，可在系统详情中查看） |
 
 > **注意**：`--secret` 参数是可选的。如果服务端系统配置了 secret，则必须提供正确的 secret 才能成功注册。
+
+### 卸载客户端
+
+**Linux:**
+```bash
+sudo systemctl stop probe-client && sudo systemctl disable probe-client && sudo rm -f /etc/systemd/system/probe-client.service /usr/local/bin/probe-client && sudo systemctl daemon-reload
+```
+
+**Windows (管理员 PowerShell):**
+```powershell
+Stop-ScheduledTask -TaskName 'PulseClient' -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName 'PulseClient' -Confirm:$false -ErrorAction SilentlyContinue; Remove-NetFirewallRule -DisplayName 'Pulse Monitoring Client*' -ErrorAction SilentlyContinue; Remove-Item -Path "$env:ProgramFiles\Pulse" -Recurse -Force -ErrorAction SilentlyContinue
+```
 
 ---
 
