@@ -28,6 +28,14 @@
 
 ---
 
+## ✨ What's New in v1.3.0
+
+- 🔐 **Shared Secret Authentication** - All clients use a unified shared secret to connect to the server, simplifying deployment
+- 🏷️ **Special Tag Support** - New `traffic:in/out` and `speed:in/out` tags for real-time traffic statistics and network speed display
+- 🎨 **Custom CSS/JS** - Support for site-wide custom styles and scripts to create a personalized monitoring dashboard
+
+---
+
 ## 🚀 Server Installation
 
 ### Method 1: Standalone Binary Deployment (Recommended for VPS)

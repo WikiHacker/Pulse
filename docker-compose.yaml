@@ -7,8 +7,6 @@ services:
     volumes:
       - pulse-data:/app/data
     restart: unless-stopped
-    networks:
-      - pulse-network
 
 volumes:
   pulse-data:
