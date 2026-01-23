@@ -1023,12 +1023,10 @@ const apiBase = apiBaseProp ?? '';
             </button>
 
             <!-- System Info -->
-            <div class="flex-1 min-w-0 flex items-start gap-4">
+            <div class="flex-1 min-w-0 flex items-center gap-3">
               <!-- Left: Name -->
-              <div class="flex flex-col gap-1 min-w-0">
-                <div class="flex items-start gap-2 min-w-0">
-                  <span class="system-name text-sm font-semibold text-[#262626] dark:text-[#f5f5f5] break-words min-w-0 max-w-full" style="word-break: break-word; overflow-wrap: break-word;">${escapeHtml(system.name || '')}</span>
-                </div>
+              <div class="flex flex-col gap-1 flex-shrink-0" style="flex-shrink: 1; min-width: 0; max-width: 250px;">
+                <span class="system-name text-sm font-semibold text-[#262626] dark:text-[#f5f5f5]" style="word-break: break-word; overflow-wrap: break-word; display: block;">${escapeHtml(system.name || '')}</span>
                 <!-- Other Info (Virtualization Type, OS) -->
                 <div class="flex flex-wrap gap-2 text-xs text-[#737373] dark:text-[#737373] text-[#404040] min-h-[16px]">
                   ${system.virtualization_type ? `<span class="system-virtualization-type">${escapeHtml(system.virtualization_type)}</span>` : ''}
@@ -1312,8 +1310,8 @@ const apiBase = apiBaseProp ?? '';
     
     // Update IPv4 - handle creation/deletion of IP rows
     // Also handle case where IP container doesn't exist but we need to create it
-    // Find the container that holds both name and IP sections
-    const nameAndIpContainer = itemElement.querySelector('.flex.items-center.gap-4');
+    // Find the container that holds both name and IP sections (the flex-1 System Info container)
+    const nameAndIpContainer = itemElement.querySelector('.flex-1.min-w-0.flex.items-center.gap-3');
     if (!nameAndIpContainer) {
       return; // Can't update without container
     }
@@ -1446,7 +1444,7 @@ const apiBase = apiBaseProp ?? '';
       // Try to find any container with these classes, including invisible ones
       // Reuse nameAndIpContainer from IPv4 update if available, otherwise find it
       // This was already set above, but if we're in a separate code path, find it again
-      const nameAndIpContainerForIPv6 = itemElement.querySelector('.flex.items-center.gap-4');
+      const nameAndIpContainerForIPv6 = itemElement.querySelector('.flex-1.min-w-0.flex.items-center.gap-3');
       if (!nameAndIpContainerForIPv6) {
         return; // Can't update without container
       }
@@ -1549,7 +1547,7 @@ const apiBase = apiBaseProp ?? '';
         // IPv6 removed - check if we need to create placeholder row
         // Ensure ipContainer is available
         if (!ipContainer) {
-          const nameAndIpContainerForIPv6 = itemElement.querySelector('.flex.items-center.gap-4');
+          const nameAndIpContainerForIPv6 = itemElement.querySelector('.flex-1.min-w-0.flex.items-center.gap-3');
           if (nameAndIpContainerForIPv6) {
             ipContainer = nameAndIpContainerForIPv6.querySelector('.ip-info-container');
             // Also check for invisible placeholder
@@ -1606,7 +1604,7 @@ const apiBase = apiBaseProp ?? '';
     // Update total network In traffic (separate from IP update)
     // This handles cases where traffic stats change but IP address hasn't changed
     if (oldItemNormalized.total_net_in_bytes !== newItemNormalized.total_net_in_bytes) {
-      const nameAndIpContainer = itemElement.querySelector('.flex.items-center.gap-4');
+      const nameAndIpContainer = itemElement.querySelector('.flex-1.min-w-0.flex.items-center.gap-3');
       if (!nameAndIpContainer) {
         return; // Can't update without container
       }
@@ -1667,7 +1665,7 @@ const apiBase = apiBaseProp ?? '';
     // Update total network Out traffic (separate from IP update)
     // This handles cases where traffic stats change but IP address hasn't changed
     if (oldItemNormalized.total_net_out_bytes !== newItemNormalized.total_net_out_bytes) {
-      const nameAndIpContainer = itemElement.querySelector('.flex.items-center.gap-4');
+      const nameAndIpContainer = itemElement.querySelector('.flex-1.min-w-0.flex.items-center.gap-3');
       if (!nameAndIpContainer) {
         return; // Can't update without container
       }
@@ -2165,14 +2163,32 @@ const apiBase = apiBaseProp ?? '';
       const res = await fetch(`${apiBase}/api/metrics?t=${Date.now()}`, {
         headers: headers
       });
+      
+      // Check response status before parsing JSON
+      if (!res.ok) {
+        if (res.status === 401) {
+          // Unauthorized - redirect to login
+          window.location.href = '/login';
+          return;
+        }
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+      
       const data = await res.json();
+      
+      // Validate data structure
+      if (!Array.isArray(data)) {
+        throw new Error('Invalid data format received');
+      }
 
       // Backend already returns data sorted by order field
       await renderSystems(data);
     } catch (err) {
+      console.error('Failed to load systems:', err);
       container.innerHTML = `
         <div class="text-center py-12">
           <p class="text-sm text-red-400">Failed to load systems</p>
+          <p class="text-xs text-[#737373] dark:text-[#737373] mt-2">${err.message || 'Unknown error'}</p>
         </div>
       `;
     }
