@@ -246,7 +246,7 @@ powershell -ExecutionPolicy Bypass -Command "& { $env:AgentId='<ID>'; $env:Serve
 
 **Linux:**
 ```bash
-sudo systemctl stop probe-client && sudo systemctl disable probe-client && sudo rm -f /etc/systemd/system/probe-client.service /usr/local/bin/probe-client && sudo systemctl daemon-reload
+sudo systemctl stop pulse-client && sudo systemctl disable pulse-client && sudo rm -f /opt/pulse/probe-client /etc/systemd/system/pulse-client.service && sudo systemctl daemon-reload
 ```
 
 **Windows (管理员 PowerShell):**
