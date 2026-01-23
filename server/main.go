@@ -715,6 +715,32 @@ func main() {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
+	// Custom CSS endpoint - returns user's custom CSS
+	mux.HandleFunc("/api/custom/style.css", func(w http.ResponseWriter, r *http.Request) {
+		config, err := store.GetNavbarConfig()
+		if err != nil || config.CustomCSS == "" {
+			w.Header().Set("Content-Type", "text/css")
+			w.Write([]byte("/* No custom CSS */"))
+			return
+		}
+		w.Header().Set("Content-Type", "text/css")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Write([]byte(config.CustomCSS))
+	})
+	
+	// Custom JS endpoint - returns user's custom JS
+	mux.HandleFunc("/api/custom/script.js", func(w http.ResponseWriter, r *http.Request) {
+		config, err := store.GetNavbarConfig()
+		if err != nil || config.CustomJS == "" {
+			w.Header().Set("Content-Type", "application/javascript")
+			w.Write([]byte("// No custom JS"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Write([]byte(config.CustomJS))
+	})
+	
 	mux.HandleFunc("/api/navbar/config", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			handleGetNavbarConfig(store, w, r)
@@ -1182,9 +1208,16 @@ func handleIngestMetric(store *Store, broker *SSEBroker, w http.ResponseWriter, 
 			}
 		}
 
-		// Generate secret for new systems (only if not from client and doesn't exist)
+		// Use shared secret for new systems (only if not from client and doesn't exist)
 		if !isFromClient && existing == nil && secret == "" {
-			secret = generateSecret()
+			// Get shared secret from navbar config
+			navbarConfig, err := store.GetNavbarConfig()
+			if err == nil && navbarConfig.SharedSecret != "" {
+				secret = navbarConfig.SharedSecret
+			} else {
+				// Fallback to generating a new secret if shared secret is not available
+				secret = generateSecret()
+			}
 		}
 
 		// Update tags if provided in payload (from admin form)
@@ -2673,6 +2706,23 @@ func handleGetNavbarConfig(store *Store, w http.ResponseWriter, r *http.Request)
 		http.Error(w, fmt.Sprintf("failed to get navbar config: %v", err), http.StatusInternalServerError)
 		return
 	}
+	
+	// SECURITY: Only return SharedSecret to authenticated admin users
+	// Unauthenticated users should never see the secret
+	if !isAuthenticated(r) {
+		// Create a copy without the secret for public access
+		publicConfig := NavbarConfig{
+			Text:      config.Text,
+			Logo:      config.Logo,
+			CustomCSS: config.CustomCSS, // Public: used for page styling
+			CustomJS:  config.CustomJS,  // Public: used for page functionality
+			// SharedSecret is intentionally omitted for security
+		}
+		writeJSON(w, http.StatusOK, publicConfig)
+		return
+	}
+	
+	// Authenticated admin users can see the full config including SharedSecret
 	writeJSON(w, http.StatusOK, config)
 }
 
@@ -2694,9 +2744,36 @@ func handleSetNavbarConfig(store *Store, w http.ResponseWriter, r *http.Request)
 		config.Text = "Pulse" // Default to "Pulse" if empty
 	}
 
+	// Get current config to check if SharedSecret has changed
+	currentConfig, err := store.GetNavbarConfig()
+	if err != nil {
+		log.Printf("⚠️ Warning: Failed to get current navbar config: %v", err)
+	}
+
+	// Check if SharedSecret has changed
+	secretChanged := currentConfig != nil && currentConfig.SharedSecret != "" && config.SharedSecret != "" && currentConfig.SharedSecret != config.SharedSecret
+
+	// Save the new navbar config
 	if err := store.SaveNavbarConfig(&config); err != nil {
 		http.Error(w, fmt.Sprintf("failed to save navbar config: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	// If SharedSecret changed, update all existing systems to use the new shared secret
+	if secretChanged {
+		systems, err := store.List()
+		if err != nil {
+			log.Printf("⚠️ Warning: Failed to list systems when updating shared secret: %v", err)
+		} else {
+			for _, system := range systems {
+				// Update each system's secret to the new shared secret
+				system.Secret = config.SharedSecret
+				if err := store.Upsert(system); err != nil {
+					log.Printf("⚠️ Warning: Failed to update secret for system %s: %v", system.ID, err)
+				}
+			}
+			log.Printf("✅ Updated shared secret and applied to %d systems", len(systems))
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "navbar config saved"})

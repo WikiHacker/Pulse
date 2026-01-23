@@ -597,8 +597,11 @@ func GenerateAuthToken() (string, error) {
 
 // NavbarConfig represents the navbar configuration
 type NavbarConfig struct {
-	Text string `json:"text"` // Custom text for navbar (default: "Pulse")
-	Logo string `json:"logo"` // Custom logo URL or SVG (default: built-in SVG)
+	Text         string `json:"text"`          // Custom text for navbar (default: "Pulse")
+	Logo         string `json:"logo"`          // Custom logo URL or SVG (default: built-in SVG)
+	SharedSecret string `json:"shared_secret"` // Shared secret for all clients
+	CustomCSS    string `json:"custom_css"`    // Custom CSS styles for all pages
+	CustomJS     string `json:"custom_js"`     // Custom JavaScript for all pages
 }
 
 // GetNavbarConfig retrieves the navbar configuration
@@ -615,8 +618,9 @@ func (s *Store) GetNavbarConfig() (*NavbarConfig, error) {
 		if data == nil {
 			// Return default config if not found
 			config = NavbarConfig{
-				Text: "Pulse",
-				Logo: "", // Empty means use default SVG
+				Text:         "Pulse",
+				Logo:         "", // Empty means use default SVG
+				SharedSecret: "", // Will be generated if needed
 			}
 			return nil
 		}
@@ -626,6 +630,20 @@ func (s *Store) GetNavbarConfig() (*NavbarConfig, error) {
 
 	if err != nil {
 		return nil, err
+	}
+
+	// Generate shared secret if not set
+	if config.SharedSecret == "" {
+		// Generate new shared secret
+		bytes := make([]byte, 12)
+		if _, err := rand.Read(bytes); err == nil {
+			config.SharedSecret = base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(bytes)
+		} else {
+			// Fallback to timestamp-based secret if crypto/rand fails
+			config.SharedSecret = fmt.Sprintf("%x", time.Now().UnixNano())[:16]
+		}
+		// Save the generated secret
+		s.SaveNavbarConfig(&config)
 	}
 
 	return &config, nil

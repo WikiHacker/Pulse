@@ -596,9 +596,9 @@ const apiBase = apiBaseProp ?? '';
   // Pre-calculate server name column width from data (before rendering DOM)
   // This prevents visual jitter by setting the correct width from the start
   function calculateServerNameColumnWidth(items) {
-    if (!items || items.length === 0) return 160;
+    if (!items || items.length === 0) return 100;
     
-    let maxWidth = 160; // Minimum width in pixels
+    let maxWidth = 100; // Minimum width in pixels (reduced for better mobile experience)
     
     // Create a temporary hidden span to measure text width accurately
     const tempSpan = document.createElement('span');
@@ -625,18 +625,21 @@ const apiBase = apiBaseProp ?? '';
       tempSpan.textContent = name;
       const textWidth = tempSpan.offsetWidth;
       
-      // Add space for:
+      // Add space for UI elements and ensure complete text display:
       // - Status dot: ~8px (w-1.5 sm:w-2)
       // - Gap after dot: 6px (gap-1.5)
       // - Gap before button: 6px (gap-1.5)
       // - Copy button: ~14px (w-2.5 sm:w-3)
-      // - Padding/margin buffer: ~6px
-      const estimatedCellWidth = textWidth + 40;
+      // - Extra buffer for font rendering variations: ~16px
+      const uiElementsWidth = isSmallScreen ? 44 : 50; // Mobile: 44px, Desktop: 50px
+      const estimatedCellWidth = textWidth + uiElementsWidth;
       maxWidth = Math.max(maxWidth, estimatedCellWidth);
     });
     
     document.body.removeChild(tempSpan);
     
+    // Return the calculated width based on longest name
+    // Table container has overflow-x-auto for horizontal scrolling on mobile if needed
     return Math.ceil(maxWidth);
   }
   
@@ -703,6 +706,40 @@ const apiBase = apiBaseProp ?? '';
     return String(text).replace(/[&<>"']/g, m => map[m]);
   }
 
+  // Format total traffic bytes to appropriate unit
+  function formatTotalTraffic(bytes) {
+    if (bytes === 0 || bytes == null) return '0 B';
+    
+    if (bytes < 1024) {
+      return `${bytes} B`;
+    } else if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(2)} KB`;
+    } else if (bytes < 1024 * 1024 * 1024) {
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    } else if (bytes < 1024 * 1024 * 1024 * 1024) {
+      return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    } else {
+      return `${(bytes / (1024 * 1024 * 1024 * 1024)).toFixed(2)} TB`;
+    }
+  }
+
+  // Format traffic speed from MB/s to appropriate unit
+  function formatTrafficSpeed(mbps) {
+    if (mbps === 0 || mbps == null) return '0 B/s';
+    
+    const bytes = mbps * 1024 * 1024; // Convert MB/s to Bytes/s
+    
+    if (bytes < 1024) {
+      return `${bytes.toFixed(0)} B/s`;
+    } else if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB/s`;
+    } else if (bytes < 1024 * 1024 * 1024) {
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MB/s`;
+    } else {
+      return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB/s`;
+    }
+  }
+
   // SECURITY: HTML attribute escape function
   function escapeHtmlAttr(text) {
     if (text == null) return '';
@@ -725,10 +762,10 @@ const apiBase = apiBaseProp ?? '';
     const safeNameAttr = escapeHtmlAttr(item.name || 'unknown');
     return `
     <div class="system-row" data-system-id="${safeId}">
-      <div class="group grid items-center gap-1 px-3 sm:px-4 md:px-6 py-2 sm:py-3 hover:bg-[#222]/50 dark:hover:bg-[#222]/50 hover:bg-[#f5f5f5] cursor-pointer transition-colors" data-system-id="${safeId}" style="grid-template-columns: minmax(160px, var(--first-col-width, 160px)) minmax(85px,1fr) minmax(90px,1fr) minmax(130px,1.6fr) minmax(130px,1.6fr) minmax(130px,1.6fr) minmax(95px,1fr) minmax(90px,1fr);">
+      <div class="group grid items-center gap-1 px-3 sm:px-4 md:px-6 py-2 sm:py-3 hover:bg-[#222]/50 dark:hover:bg-[#222]/50 hover:bg-[#f5f5f5] cursor-pointer transition-colors" data-system-id="${safeId}" style="grid-template-columns: var(--first-col-width, 100px) minmax(85px,1fr) minmax(90px,1fr) minmax(130px,1.6fr) minmax(130px,1.6fr) minmax(130px,1.6fr) minmax(95px,1fr) minmax(90px,1fr);">
         <div class="flex items-center gap-1.5 min-h-[20px]">
           <span class="h-1.5 w-1.5 sm:h-2 sm:w-2 rounded-full ${isOffline ? 'bg-red-400' : 'bg-emerald-400'} shrink-0"></span>
-          <span class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5]">${safeName}</span>
+          <span class="text-[10px] sm:text-xs font-medium text-[#262626] dark:text-[#f5f5f5] whitespace-nowrap">${safeName}</span>
           <button class="copy-btn text-[#737373] dark:text-[#737373] text-[#525252] hover:text-[#d4d4d4] dark:hover:text-[#d4d4d4] hover:text-[#151515] opacity-0 group-hover:opacity-100 transition-opacity shrink-0" data-system-name="${safeNameAttr}" title="Copy system name">
             <svg class="copy-icon w-2.5 h-2.5 sm:w-3 sm:h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
             <svg class="check-icon w-2.5 h-2.5 sm:w-3 sm:h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;"><path d="M20 6L9 17l-5-5"/></svg>
@@ -764,6 +801,59 @@ const apiBase = apiBaseProp ?? '';
               ${item.tags.map(tag => {
                 // SECURITY: Escape tag to prevent XSS
                 const safeTag = escapeHtml(tag);
+                
+                // Check for special traffic tags
+                if (tag === 'traffic:in') {
+                  // Format total network in traffic (cumulative)
+                  const totalNetIn = item.total_net_in_bytes || 0;
+                  const formattedIn = formatTotalTraffic(totalNetIn);
+                  return `
+                  <span class="inline-flex items-center gap-1 rounded-md bg-[#262626] dark:bg-[#262626] bg-[#d4d4d4] px-2 py-0.5 text-[10px] sm:text-xs font-medium text-[#404040] dark:text-[#f5f5f5]" data-traffic-tag="in" data-system-id="${safeId}">
+                    <svg class="w-3 h-3" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>
+                    </svg>
+                    <span class="traffic-value">${formattedIn}</span>
+                  </span>
+                  `;
+                } else if (tag === 'traffic:out') {
+                  // Format total network out traffic (cumulative)
+                  const totalNetOut = item.total_net_out_bytes || 0;
+                  const formattedOut = formatTotalTraffic(totalNetOut);
+                  return `
+                  <span class="inline-flex items-center gap-1 rounded-md bg-[#262626] dark:bg-[#262626] bg-[#d4d4d4] px-2 py-0.5 text-[10px] sm:text-xs font-medium text-[#404040] dark:text-[#f5f5f5]" data-traffic-tag="out" data-system-id="${safeId}">
+                    <svg class="w-3 h-3" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>
+                    </svg>
+                    <span class="traffic-value">${formattedOut}</span>
+                  </span>
+                  `;
+                } else if (tag === 'speed:in') {
+                  // Format current network in speed (rate)
+                  const netInSpeed = item.net_in_mb_s || 0;
+                  const formattedSpeed = formatTrafficSpeed(netInSpeed);
+                  return `
+                  <span class="inline-flex items-center gap-1 rounded-md bg-[#262626] dark:bg-[#262626] bg-[#d4d4d4] px-2 py-0.5 text-[10px] sm:text-xs font-medium text-[#404040] dark:text-[#f5f5f5]" data-speed-tag="in" data-system-id="${safeId}">
+                    <svg class="w-3 h-3" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="m7 13 5 5 5-5"/><path d="m7 6 5 5 5-5"/>
+                    </svg>
+                    <span class="speed-value">${formattedSpeed}</span>
+                  </span>
+                  `;
+                } else if (tag === 'speed:out') {
+                  // Format current network out speed (rate)
+                  const netOutSpeed = item.net_out_mb_s || 0;
+                  const formattedSpeed = formatTrafficSpeed(netOutSpeed);
+                  return `
+                  <span class="inline-flex items-center gap-1 rounded-md bg-[#262626] dark:bg-[#262626] bg-[#d4d4d4] px-2 py-0.5 text-[10px] sm:text-xs font-medium text-[#404040] dark:text-[#f5f5f5]" data-speed-tag="out" data-system-id="${safeId}">
+                    <svg class="w-3 h-3" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="m17 11-5-5-5 5"/><path d="m17 18-5-5-5 5"/>
+                    </svg>
+                    <span class="speed-value">${formattedSpeed}</span>
+                  </span>
+                  `;
+                }
+                
+                // Regular tag
                 return `
                 <span class="inline-flex items-center rounded-md bg-[#262626] dark:bg-[#262626] bg-[#d4d4d4] px-2 py-0.5 text-[10px] sm:text-xs font-medium text-[#404040] dark:text-[#f5f5f5]">
                   ${safeTag}
@@ -981,6 +1071,8 @@ const apiBase = apiBaseProp ?? '';
       disk_info: String(item.disk_info || ''),
       net_in_mb_s: Number(item.net_in_mb_s || 0),
       net_out_mb_s: Number(item.net_out_mb_s || 0),
+      total_net_in_bytes: Number(item.total_net_in_bytes || 0),
+      total_net_out_bytes: Number(item.total_net_out_bytes || 0),
       os: String(item.os || ''),
       os_icon: String(item.os_icon || ''),
       alert: Boolean(item.alert || false),
@@ -1038,6 +1130,65 @@ const apiBase = apiBaseProp ?? '';
     
     // If no old data, update all fields (treat as new item)
     const shouldUpdateAll = !previousItem && !currentData.get(item.id);
+    
+    // Update traffic tags if they exist and network traffic changed
+    const trafficTagTotalInChanged = oldItemNormalized.total_net_in_bytes !== newItemNormalized.total_net_in_bytes;
+    const trafficTagTotalOutChanged = oldItemNormalized.total_net_out_bytes !== newItemNormalized.total_net_out_bytes;
+    // For speed tags, always consider them changed (speed is real-time and should update every cycle)
+    const speedTagInChanged = oldItemNormalized.net_in_mb_s !== newItemNormalized.net_in_mb_s;
+    const speedTagOutChanged = oldItemNormalized.net_out_mb_s !== newItemNormalized.net_out_mb_s;
+    
+    if (shouldUpdateAll || trafficTagTotalInChanged || trafficTagTotalOutChanged || speedTagInChanged || speedTagOutChanged) {
+      // Find all traffic and speed tags in the details section
+      // Update them regardless of whether the section is expanded or collapsed
+      // This ensures tags show latest data when user expands the section
+      const detailsSection = document.querySelector(`[data-details-id="${item.id}"]`);
+      if (detailsSection) {
+        // Update traffic:in tags (total cumulative)
+        if (trafficTagTotalInChanged || shouldUpdateAll) {
+          const trafficInTags = detailsSection.querySelectorAll('[data-traffic-tag="in"]');
+          trafficInTags.forEach(tag => {
+            const valueSpan = tag.querySelector('.traffic-value');
+            if (valueSpan) {
+              valueSpan.textContent = formatTotalTraffic(item.total_net_in_bytes || 0);
+            }
+          });
+        }
+        
+        // Update traffic:out tags (total cumulative)
+        if (trafficTagTotalOutChanged || shouldUpdateAll) {
+          const trafficOutTags = detailsSection.querySelectorAll('[data-traffic-tag="out"]');
+          trafficOutTags.forEach(tag => {
+            const valueSpan = tag.querySelector('.traffic-value');
+            if (valueSpan) {
+              valueSpan.textContent = formatTotalTraffic(item.total_net_out_bytes || 0);
+            }
+          });
+        }
+        
+        // Update speed:in tags (current rate)
+        if (speedTagInChanged || shouldUpdateAll) {
+          const speedInTags = detailsSection.querySelectorAll('[data-speed-tag="in"]');
+          speedInTags.forEach(tag => {
+            const valueSpan = tag.querySelector('.speed-value');
+            if (valueSpan) {
+              valueSpan.textContent = formatTrafficSpeed(item.net_in_mb_s || 0);
+            }
+          });
+        }
+        
+        // Update speed:out tags (current rate)
+        if (speedTagOutChanged || shouldUpdateAll) {
+          const speedOutTags = detailsSection.querySelectorAll('[data-speed-tag="out"]');
+          speedOutTags.forEach(tag => {
+            const valueSpan = tag.querySelector('.speed-value');
+            if (valueSpan) {
+              valueSpan.textContent = formatTrafficSpeed(item.net_out_mb_s || 0);
+            }
+          });
+        }
+      }
+    }
     
     // Cell 0: System name (with status dot and copy button)
     const systemCell = cells[0];
@@ -1905,10 +2056,18 @@ const apiBase = apiBaseProp ?? '';
         return;
     }
     
-    // If incremental is true, we should have returned above
-    if (incremental) {
+    // If incremental is true, we should have returned above (if chart exists)
+    // However, if chart doesn't exist (e.g., transitioned from no-data to has-data),
+    // we need to create a new chart, so continue with full chart creation
+    if (incremental && existingChartData && existingChartData.chart) {
+      // Chart exists and we've already handled incremental update above
       return;
     }
+    
+    // If we reach here with incremental=true but no existing chart,
+    // it means we're transitioning from no-data to has-data
+    // We need to create a new chart and show it properly, so treat it as full reload
+    const isNewChartCreation = incremental && !existingChartData;
     
     // If no existing chart or full reload needed, destroy all charts for this system
     const chartsToDestroy = [];
@@ -2358,8 +2517,9 @@ const apiBase = apiBaseProp ?? '';
 
     tcpingCharts.set(chartKey, { chart, target: 'all' });
     
-    // Hide loading state and show chart (only if not incremental update)
-    if (!incremental) {
+    // Hide loading state and show chart (for full reload or new chart creation)
+    // If incremental update created a new chart (no-data to has-data transition), also show it
+    if (!incremental || isNewChartCreation) {
       const loadingElement = container.querySelector(`[data-tcping-loading="${systemId}"]`);
       if (loadingElement) {
         loadingElement.style.display = 'none';
@@ -2788,11 +2948,24 @@ const apiBase = apiBaseProp ?? '';
     
     // Initial render - if no existing data, render everything
     if (currentData.size === 0) {
-      // Hide loading indicator - width already adjusted by loadData
-      if (loadingIndicator) loadingIndicator.style.display = 'none';
+      // Hide loading indicator now that data is ready
+      if (loadingIndicator) {
+        // Fade out the loading container
+        loadingIndicator.style.opacity = '0';
+        setTimeout(() => {
+          loadingIndicator.style.display = 'none';
+        }, 250);
+      }
       
+      // Add initial-load class for stagger animation
+      body.classList.add('initial-load');
       body.innerHTML = items.map(item => renderRow(item, tcpingConfigured)).join('');
       currentData = newData;
+      
+      // Remove initial-load class after animations complete
+      setTimeout(() => {
+        body.classList.remove('initial-load');
+      }, 800); // Max animation delay (400ms) + animation duration (350ms) + buffer
       
       // Add staggered entrance animation for initial load
       const systemRows = body.querySelectorAll('.system-row');
@@ -3014,36 +3187,46 @@ const apiBase = apiBaseProp ?? '';
       
       if (data.length === 0) {
         showEmpty();
+        // Show header even when empty
+        const headerRow = document.getElementById('system-table-header-row');
+        if (headerRow) {
+          headerRow.style.opacity = '1';
+        }
       } else {
-        // CRITICAL: Always calculate and apply column width to handle SSE updates
-        // This ensures LoadingState always has correct width, even during incremental updates
+        // CRITICAL: Always calculate and apply column width first
         const preCalculatedWidth = calculateServerNameColumnWidth(data);
-        applyServerNameColumnWidth(preCalculatedWidth); // Only increases, never decreases + forces reflow
+        applyServerNameColumnWidth(preCalculatedWidth);
         
-        // Only wait for browser repaint on first load (when LoadingState is visible)
-        // For incremental updates, proceed immediately to avoid unnecessary delay
-        if (currentData.size === 0 && data.length > 0) {
-          // Force browser to recalculate LoadingState styles by reading computed style
-          // This ensures the CSS variable has been applied to LoadingState elements
-          if (loadingIndicator) {
-            // CRITICAL: Always force style calculation on loadingIndicator itself
-            // This works even if the child elements haven't fully rendered yet
-            void window.getComputedStyle(loadingIndicator).display;
-            
-            // Additionally, if we can find the LoadingState rows, force their style calculation too
-            // This is a belt-and-suspenders approach for maximum reliability
-            const loadingRows = loadingIndicator.querySelectorAll('[style*="grid-template-columns"]');
-            if (loadingRows.length > 0) {
-              // Reading gridTemplateColumns forces style recalculation for this element
-              void window.getComputedStyle(loadingRows[0]).gridTemplateColumns;
-            }
+        const isFirstLoad = currentData.size === 0;
+        
+        if (isFirstLoad) {
+          // Force immediate style recalculation
+          const root = document.getElementById('monitor-root');
+          if (root) {
+            void root.offsetHeight; // Trigger reflow
           }
           
-          // Wait for browser to repaint LoadingState with correct width
-          // This is crucial - LoadingState must show correct width before hiding
-          await new Promise(resolve => requestAnimationFrame(() => {
-            requestAnimationFrame(resolve);
-          }));
+          // Hide initial loading spinner
+          const initialLoading = document.getElementById('initial-loading');
+          if (initialLoading) {
+            initialLoading.style.display = 'none';
+          }
+          
+          // Show skeleton rows with correct column width
+          const skeletonRows = document.getElementById('skeleton-rows');
+          if (skeletonRows) {
+            skeletonRows.style.display = 'block';
+          }
+          
+          // Show header with correct width
+          const headerRow = document.getElementById('system-table-header-row');
+          if (headerRow) {
+            headerRow.style.transition = 'opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1)';
+            headerRow.style.opacity = '1';
+          }
+          
+          // Wait a moment to show skeleton (provides visual feedback)
+          await new Promise(resolve => setTimeout(resolve, 300));
         }
         
         // Apply filter first, then sorting
@@ -3059,6 +3242,11 @@ const apiBase = apiBaseProp ?? '';
             <p class="text-xs text-[#525252] dark:text-[#525252] text-[#737373] mt-1">${err.message}</p>
           </div>
         `;
+      }
+      // Show header even on error
+      const headerRow = document.getElementById('system-table-header-row');
+      if (headerRow) {
+        headerRow.style.opacity = '1';
       }
     }
   }
@@ -3224,3 +3412,52 @@ const apiBase = apiBaseProp ?? '';
     }
   });
 </script>
+
+<style is:global>
+  /* Column width management for table */
+  #monitor-root {
+    --first-col-width: 160px;
+  }
+  
+  /* Loading → Loaded smooth transition (matches project theme) */
+  #loading-indicator {
+    /* Fade out with same easing as page animations */
+    transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+                transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  
+  #loading-indicator.fade-out {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  
+  /* Initial data load animation (only for first render) */
+  .initial-load .system-row {
+    animation: data-row-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    opacity: 0;
+  }
+  
+  @keyframes data-row-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  /* Apply staggered delay to first 10 rows only */
+  .initial-load .system-row:nth-child(1) { animation-delay: 0ms; }
+  .initial-load .system-row:nth-child(2) { animation-delay: 40ms; }
+  .initial-load .system-row:nth-child(3) { animation-delay: 80ms; }
+  .initial-load .system-row:nth-child(4) { animation-delay: 120ms; }
+  .initial-load .system-row:nth-child(5) { animation-delay: 160ms; }
+  .initial-load .system-row:nth-child(6) { animation-delay: 200ms; }
+  .initial-load .system-row:nth-child(7) { animation-delay: 240ms; }
+  .initial-load .system-row:nth-child(8) { animation-delay: 280ms; }
+  .initial-load .system-row:nth-child(9) { animation-delay: 320ms; }
+  .initial-load .system-row:nth-child(10) { animation-delay: 360ms; }
+  .initial-load .system-row:nth-child(n+11) { animation-delay: 400ms; }
+</style>

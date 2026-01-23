@@ -118,6 +118,72 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? '';
           });
       })();
     </script>
+    <!-- Load custom CSS and JS from backend (all users see it) -->
+    <script is:inline>
+      (function() {
+        // Use synchronous XMLHttpRequest to load config BEFORE page renders
+        // This ensures external scripts load early enough for DOMContentLoaded
+        try {
+          var xhr = new XMLHttpRequest();
+          xhr.open('GET', '/api/navbar/config', false); // false = synchronous
+          xhr.send();
+          
+          if (xhr.status === 200) {
+            var config = JSON.parse(xhr.responseText);
+            
+            // Inject CSS if exists
+            if (config.custom_css && config.custom_css.trim()) {
+              var style = document.createElement('style');
+              style.textContent = config.custom_css;
+              document.head.appendChild(style);
+            }
+            
+            // Inject JS if exists
+            if (config.custom_js && config.custom_js.trim()) {
+              var customJS = config.custom_js;
+              
+              // Check if it's a complete <script> tag (external or with attributes)
+              var scriptTagRegex = /<script([^>]*)>([\s\S]*?)<\/script>/gi;
+              var scriptMatches = [];
+              var match;
+              while ((match = scriptTagRegex.exec(customJS)) !== null) {
+                scriptMatches.push({attrs: match[1], content: match[2]});
+              }
+              
+              if (scriptMatches.length > 0) {
+                // Has <script> tags - parse and inject each
+                scriptMatches.forEach(function(scriptData) {
+                  var script = document.createElement('script');
+                  
+                  // Check if it has src attribute (external script)
+                  var srcMatch = scriptData.attrs.match(/src=["']([^"']+)["']/);
+                  if (srcMatch) {
+                    script.src = srcMatch[1];
+                    // Force synchronous loading for external scripts
+                    script.async = false;
+                    script.defer = false;
+                  } else if (scriptData.content.trim()) {
+                    // Inline script
+                    script.textContent = scriptData.content;
+                  }
+                  
+                  if (script.src || script.textContent) {
+                    document.head.appendChild(script);
+                  }
+                });
+              } else {
+                // Plain JS code without tags - inject directly
+                var script = document.createElement('script');
+                script.textContent = customJS;
+                document.head.appendChild(script);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to load custom styles:', err);
+        }
+      })();
+    </script>
   </head>
   <body class="min-h-screen overflow-x-hidden flex flex-col bg-[#151515] dark:bg-[#151515] bg-white text-[#f5f5f5] dark:text-[#f5f5f5] text-[#151515]">
     <div id="auth-check" class="hidden min-h-screen flex flex-col">

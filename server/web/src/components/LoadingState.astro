@@ -3,17 +3,26 @@
 // Shows animated placeholder rows while data is loading
 ---
 
-<div id="loading-indicator" class="animate-page-in">
-  <!-- Skeleton rows with staggered animation -->
+<div id="loading-indicator" class="animate-page-in" style="min-height: 300px;">
+  <!-- Simple centered loading spinner (shown initially until data loads) -->
+  <div id="initial-loading" class="flex items-center justify-center py-16">
+    <div class="flex flex-col items-center gap-3">
+      <div class="w-8 h-8 border-3 border-[#404040] dark:border-[#404040] border-[#a3a3a3] border-t-[#d4d4d4] dark:border-t-[#d4d4d4] border-t-[#404040] rounded-full animate-spin"></div>
+      <p class="text-sm text-[#737373] dark:text-[#737373] text-[#525252]">Loading systems...</p>
+    </div>
+  </div>
+  
+  <!-- Skeleton rows (hidden initially, shown for subsequent loads) -->
+  <div id="skeleton-rows" style="display: none;">
   {[0, 1, 2, 3, 4].map((i) => (
     <div
       class="grid items-center gap-1 px-3 sm:px-4 md:px-6 py-2 sm:py-3 border-b border-[#404040]/30 dark:border-[#404040]/30 border-[#e5e5e5]/50 animate-stagger-in"
-      style={`grid-template-columns: minmax(160px, var(--first-col-width, 160px)) minmax(85px,1fr) minmax(90px,1fr) minmax(130px,1.6fr) minmax(130px,1.6fr) minmax(130px,1.6fr) minmax(95px,1fr) minmax(90px,1fr); animation-delay: ${i * 80}ms`}
+      style={`grid-template-columns: var(--first-col-width, 100px) minmax(85px,1fr) minmax(90px,1fr) minmax(130px,1.6fr) minmax(130px,1.6fr) minmax(130px,1.6fr) minmax(95px,1fr) minmax(90px,1fr); animation-delay: ${i * 80}ms`}
     >
       <!-- Name column -->
-      <div class="flex items-center gap-1.5 min-h-[20px]">
-        <div class="h-1.5 w-1.5 sm:h-2 sm:w-2 rounded-full bg-[#333] dark:bg-[#333] bg-[#e5e5e5] animate-skeleton"></div>
-        <div class="h-3 w-20 sm:w-24 rounded bg-[#282828] dark:bg-[#282828] bg-[#f0f0f0] animate-shimmer"></div>
+      <div class="flex items-center gap-1.5 min-h-[20px] min-w-0 w-full pr-2">
+        <div class="h-1.5 w-1.5 sm:h-2 sm:w-2 rounded-full bg-[#333] dark:bg-[#333] bg-[#e5e5e5] animate-skeleton shrink-0"></div>
+        <div class="h-3 flex-1 max-w-[calc(100%-40px)] rounded bg-[#282828] dark:bg-[#282828] bg-[#f0f0f0] animate-shimmer"></div>
       </div>
       <!-- Time column -->
       <div class="h-5 flex items-center">
@@ -60,4 +69,5 @@
       </div>
     </div>
   ))}
+  </div>
 </div>
