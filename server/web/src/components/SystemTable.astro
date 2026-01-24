@@ -2959,27 +2959,30 @@ const apiBase = apiBaseProp ?? '';
       
       // Add initial-load class for stagger animation
       body.classList.add('initial-load');
-      body.innerHTML = items.map(item => renderRow(item, tcpingConfigured)).join('');
+      
+      // Batch DOM update: Build all HTML with inline styles to avoid layout thrashing
+      const rowsHTML = items.map((item, index) => {
+        const rowHTML = renderRow(item, tcpingConfigured);
+        // Wrap with inline animation delay to avoid per-row style manipulation
+        return rowHTML.replace(
+          'class="system-row',
+          `class="system-row animate-stagger-in" style="opacity: 0; animation-delay: ${index * 50}ms;"`
+        );
+      }).join('');
+      
+      body.innerHTML = rowsHTML;
       currentData = newData;
       
-      // Remove initial-load class after animations complete
+      // Remove initial-load class and cleanup animation styles after completion
       setTimeout(() => {
         body.classList.remove('initial-load');
-      }, 800); // Max animation delay (400ms) + animation duration (350ms) + buffer
-      
-      // Add staggered entrance animation for initial load
-      const systemRows = body.querySelectorAll('.system-row');
-      systemRows.forEach((row, index) => {
-        row.style.opacity = '0';
-        row.classList.add('animate-stagger-in');
-        row.style.animationDelay = `${index * 50}ms`;
-        // Clean up after animation
-        setTimeout(() => {
+        const systemRows = body.querySelectorAll('.system-row');
+        systemRows.forEach(row => {
           row.style.opacity = '';
           row.classList.remove('animate-stagger-in');
           row.style.animationDelay = '';
-        }, 400 + index * 50);
-      });
+        });
+      }, 800); // Max animation delay (400ms) + animation duration (350ms) + buffer
       
       await loadOSIcons();
       await loadFlagIcons();
@@ -3255,7 +3258,7 @@ const apiBase = apiBaseProp ?? '';
   let loadDataTimeout = null;
   let isLoadDataRunning = false; // Flag to prevent concurrent loadData calls
   const debouncedLoadData = () => {
-    // If loadData is already running, skip this call
+    // If loadData is already running, skip scheduling
     if (isLoadDataRunning) {
       return;
     }
@@ -3264,8 +3267,10 @@ const apiBase = apiBaseProp ?? '';
       clearTimeout(loadDataTimeout);
     }
     loadDataTimeout = setTimeout(async () => {
+      // Double check before executing (in case loadData started between scheduling and execution)
       if (isLoadDataRunning) {
-        return; // Double check before executing
+        loadDataTimeout = null;
+        return;
       }
       isLoadDataRunning = true;
       try {
