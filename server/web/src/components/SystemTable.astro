@@ -2948,41 +2948,25 @@ const apiBase = apiBaseProp ?? '';
     
     // Initial render - if no existing data, render everything
     if (currentData.size === 0) {
-      // Hide loading indicator now that data is ready
-      if (loadingIndicator) {
-        // Fade out the loading container
-        loadingIndicator.style.opacity = '0';
-        setTimeout(() => {
-          loadingIndicator.style.display = 'none';
-        }, 250);
-      }
+      // Hide loading indicator - width already adjusted by loadData
+      if (loadingIndicator) loadingIndicator.style.display = 'none';
       
-      // Add initial-load class for stagger animation
-      body.classList.add('initial-load');
-      
-      // Batch DOM update: Build all HTML with inline styles to avoid layout thrashing
-      const rowsHTML = items.map((item, index) => {
-        const rowHTML = renderRow(item, tcpingConfigured);
-        // Wrap with inline animation delay to avoid per-row style manipulation
-        return rowHTML.replace(
-          'class="system-row',
-          `class="system-row animate-stagger-in" style="opacity: 0; animation-delay: ${index * 50}ms;"`
-        );
-      }).join('');
-      
-      body.innerHTML = rowsHTML;
+      body.innerHTML = items.map(item => renderRow(item, tcpingConfigured)).join('');
       currentData = newData;
       
-      // Remove initial-load class and cleanup animation styles after completion
-      setTimeout(() => {
-        body.classList.remove('initial-load');
-        const systemRows = body.querySelectorAll('.system-row');
-        systemRows.forEach(row => {
+      // Add staggered entrance animation for initial load
+      const systemRows = body.querySelectorAll('.system-row');
+      systemRows.forEach((row, index) => {
+        row.style.opacity = '0';
+        row.style.animation = 'data-row-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards';
+        row.style.animationDelay = `${index * 50}ms`;
+        // Clean up after animation
+        setTimeout(() => {
           row.style.opacity = '';
-          row.classList.remove('animate-stagger-in');
+          row.style.animation = '';
           row.style.animationDelay = '';
-        });
-      }, 800); // Max animation delay (400ms) + animation duration (350ms) + buffer
+        }, 400 + index * 50);
+      });
       
       await loadOSIcons();
       await loadFlagIcons();
@@ -3436,12 +3420,6 @@ const apiBase = apiBaseProp ?? '';
     transform: translateY(-4px);
   }
   
-  /* Initial data load animation (only for first render) */
-  .initial-load .system-row {
-    animation: data-row-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    opacity: 0;
-  }
-  
   @keyframes data-row-in {
     from {
       opacity: 0;
@@ -3452,17 +3430,4 @@ const apiBase = apiBaseProp ?? '';
       transform: translateY(0);
     }
   }
-  
-  /* Apply staggered delay to first 10 rows only */
-  .initial-load .system-row:nth-child(1) { animation-delay: 0ms; }
-  .initial-load .system-row:nth-child(2) { animation-delay: 40ms; }
-  .initial-load .system-row:nth-child(3) { animation-delay: 80ms; }
-  .initial-load .system-row:nth-child(4) { animation-delay: 120ms; }
-  .initial-load .system-row:nth-child(5) { animation-delay: 160ms; }
-  .initial-load .system-row:nth-child(6) { animation-delay: 200ms; }
-  .initial-load .system-row:nth-child(7) { animation-delay: 240ms; }
-  .initial-load .system-row:nth-child(8) { animation-delay: 280ms; }
-  .initial-load .system-row:nth-child(9) { animation-delay: 320ms; }
-  .initial-load .system-row:nth-child(10) { animation-delay: 360ms; }
-  .initial-load .system-row:nth-child(n+11) { animation-delay: 400ms; }
 </style>
