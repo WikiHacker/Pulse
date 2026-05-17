@@ -3621,8 +3621,17 @@ const apiBase = apiBaseProp ?? '';
       return; // Silent skip - no DOM operations
     }
     
-    // Remove deleted rows
+    // Remove deleted rows. Tear down all per-system state first so the
+    // Chart.js instance (which holds canvas references, dataset arrays,
+    // and an active animation handle) becomes eligible for GC. Without
+    // this, every system that was ever expanded before its deletion
+    // would leave a ghost chart pinned in memory for the lifetime of
+    // the page — a slow leak for browsers left open on the dashboard
+    // through many admin add/delete cycles.
     rowsToRemove.forEach(id => {
+      try { cleanupTCPingChart(id); } catch (_) {}
+      tcpingConfigs.delete(id);
+      tcpingActiveTargets.delete(id);
       const rowElement = existingRowMap.get(id);
       if (rowElement) {
         const systemRow = rowElement.closest('.system-row');

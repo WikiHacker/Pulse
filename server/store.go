@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -157,6 +158,45 @@ func NewStore(dbPath string) (*Store, error) {
 
 	store := &Store{db: db}
 
+	// One-shot cleanup of orphan buckets left over from older code paths
+	// (a v1 secondary-index experiment that was rolled back to the cursor-seek
+	// design). The current binary never reads or writes these buckets, but
+	// existing on-disk files can carry tens of megabytes of frozen index
+	// pages from the previous code version. Dropping them frees the pages
+	// to the freelist so the subsequent vacuum can reclaim them.
+	if dropped, err := store.dropOrphanBuckets(); err != nil {
+		log.Printf("⚠️  orphan-bucket cleanup failed (non-fatal): %v", err)
+	} else if len(dropped) > 0 {
+		log.Printf("🧹 Dropped orphan buckets/keys from previous versions: %s", strings.Join(dropped, ", "))
+	}
+
+	// Online compaction. bbolt is append-only: when records are deleted the
+	// pages go on the freelist but the file never shrinks on its own. On
+	// long-running deployments with churny workloads (24h tcping window),
+	// the file slowly accumulates fragmented free space and can grow to many
+	// times the live-data size. Because bbolt mmaps the whole file into the
+	// process address space, every bloat byte eventually becomes RSS as
+	// cleanup scans and history queries touch the mapped pages — which is
+	// what historically presented as "memory keeps growing after
+	// systemctl restart until the box OOMs". Reclaiming the freelist on
+	// startup keeps RSS bounded to the live data size + a small overhead.
+	if newPath, before, after, err := store.maybeCompact(dbPath); err != nil {
+		// Fatal sentinel: vacuum had to close the handle and couldn't reopen.
+		// Continuing would crash on the next db.View, so abort startup cleanly
+		// and let systemd restart us — the on-disk file is intact, just the
+		// in-process handle is gone.
+		if errors.Is(err, errCompactLeftStoreClosed) {
+			return nil, fmt.Errorf("bbolt vacuum left store unusable, aborting startup: %w", err)
+		}
+		log.Printf("⚠️  bbolt vacuum failed (non-fatal, original DB preserved): %v", err)
+	} else if after > 0 {
+		log.Printf("🧯 bbolt vacuum: %.1f MB → %.1f MB (saved %.1f MB)",
+			float64(before)/1024/1024,
+			float64(after)/1024/1024,
+			float64(before-after)/1024/1024)
+		_ = newPath // already swapped in
+	}
+
 	// Log current data count
 	count := store.Count()
 	if count == 0 {
@@ -166,6 +206,276 @@ func NewStore(dbPath string) (*Store, error) {
 	}
 
 	return store, nil
+}
+
+// dropOrphanBuckets removes top-level buckets and config keys that the
+// current code never touches. They were created by an earlier secondary-index
+// experiment (see git history of the cursor-seek refactor) that was reverted
+// in favour of timestamp-prefixed primary keys. The dropped pages return to
+// the freelist and are reclaimed by maybeCompact below.
+//
+// The list is intentionally explicit (rather than "delete anything not in a
+// known set") so that a future migration adding a new bucket cannot
+// accidentally wipe data on rollback.
+func (s *Store) dropOrphanBuckets() ([]string, error) {
+	knownOrphanBuckets := []string{
+		"tcping_by_client",
+		"tcping_by_client_target",
+	}
+	knownOrphanConfigKeys := []string{
+		"tcping_index_v1_ready",
+	}
+
+	var dropped []string
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		for _, name := range knownOrphanBuckets {
+			if tx.Bucket([]byte(name)) != nil {
+				if err := tx.DeleteBucket([]byte(name)); err != nil {
+					return fmt.Errorf("drop bucket %s: %w", name, err)
+				}
+				dropped = append(dropped, "bucket:"+name)
+			}
+		}
+		if cb := tx.Bucket([]byte(configBucket)); cb != nil {
+			for _, k := range knownOrphanConfigKeys {
+				if cb.Get([]byte(k)) != nil {
+					if err := cb.Delete([]byte(k)); err != nil {
+						return fmt.Errorf("delete config key %s: %w", k, err)
+					}
+					dropped = append(dropped, "config:"+k)
+				}
+			}
+		}
+		return nil
+	})
+	return dropped, err
+}
+
+// liveDataBytes estimates how many bytes the bbolt file would occupy if it
+// were perfectly compacted. We sum every bucket's leaf+branch in-use sizes;
+// freelist pages and unused tail-end of the file are excluded by design.
+func (s *Store) liveDataBytes() (int64, error) {
+	var total int64
+	err := s.db.View(func(tx *bolt.Tx) error {
+		return tx.ForEach(func(_ []byte, b *bolt.Bucket) error {
+			st := b.Stats()
+			total += int64(st.LeafInuse + st.BranchInuse)
+			return nil
+		})
+	})
+	return total, err
+}
+
+// maybeCompact runs bolt.Compact() into a sibling temp file and atomically
+// renames it over the live DB iff the live file is significantly larger
+// than the in-use data. Atomic rename + retained-on-failure semantics make
+// this safe to run unconditionally at every startup: on failure the original
+// file is untouched and the service still comes up.
+//
+// Return values: (newPath, sizeBefore, sizeAfter, err). When no compaction is
+// performed, sizeAfter == 0 and err == nil. Caller logs accordingly.
+const (
+	// Don't bother compacting databases under 16 MB — the savings aren't
+	// worth the startup cost and the RSS impact is negligible.
+	compactMinBytes int64 = 16 << 20
+	// Compact whenever the file is more than this multiple of the live data.
+	// 2× is generous: bbolt naturally keeps some slack for write throughput,
+	// and we don't want to spin into a compact-loop on a healthy DB.
+	compactRatio = 2.0
+	// Cap the per-tx size to keep compaction's transient RAM footprint
+	// bounded even on multi-GB databases.
+	compactTxMaxBytes int64 = 64 << 20
+)
+
+func (s *Store) maybeCompact(dbPath string) (string, int64, int64, error) {
+	st, err := os.Stat(dbPath)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	sizeBefore := st.Size()
+	if sizeBefore < compactMinBytes {
+		return "", sizeBefore, 0, nil
+	}
+
+	live, err := s.liveDataBytes()
+	if err != nil {
+		return "", sizeBefore, 0, fmt.Errorf("live-data probe: %w", err)
+	}
+	if live <= 0 || float64(sizeBefore) < compactRatio*float64(live) {
+		return "", sizeBefore, 0, nil
+	}
+
+	log.Printf("🧯 bbolt vacuum: file=%d live=%d (ratio %.1fx) — compacting...",
+		sizeBefore, live, float64(sizeBefore)/float64(live))
+
+	tmpPath := dbPath + ".compacting"
+	// Clean up any leftover from a previous interrupted compaction.
+	_ = os.Remove(tmpPath)
+
+	dst, err := bolt.Open(tmpPath, 0600, &bolt.Options{
+		Timeout:      5 * time.Second,
+		FreelistType: bolt.FreelistMapType,
+	})
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		return "", sizeBefore, 0, fmt.Errorf("open temp db: %w", err)
+	}
+
+	if err := bolt.Compact(dst, s.db, compactTxMaxBytes); err != nil {
+		_ = dst.Close()
+		_ = os.Remove(tmpPath)
+		return "", sizeBefore, 0, fmt.Errorf("compact: %w", err)
+	}
+	if err := dst.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", sizeBefore, 0, fmt.Errorf("close temp db: %w", err)
+	}
+
+	// Close the original handle so we can atomically rename over it.
+	// We must reopen afterwards to give the caller a usable Store.
+	// Past this point, s.db has been closed: every failure branch MUST
+	// either restore s.db to a working handle or return a sentinel error
+	// (ErrCompactLeftStoreClosed) so the caller can fail fast instead of
+	// crashing later on a dereferenced-nil bolt.DB. See NewStore for how
+	// that contract is enforced.
+	if err := s.db.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		// db.Close() failed — s.db may or may not be usable. Try to reopen
+		// the original file so the caller still has a working store; if
+		// that fails too, surface ErrCompactLeftStoreClosed.
+		if reopened, rerr := openBolt(dbPath); rerr == nil {
+			s.db = reopened
+			return "", sizeBefore, 0, fmt.Errorf("close original db: %w", err)
+		}
+		return "", sizeBefore, 0, fmt.Errorf("%w (close original db: %v)", errCompactLeftStoreClosed, err)
+	}
+
+	if err := os.Rename(tmpPath, dbPath); err != nil {
+		// Try to reopen the original so the service can still start
+		// (worst case it stays bloated until next restart).
+		if reopened, rerr := openBolt(dbPath); rerr == nil {
+			s.db = reopened
+			_ = os.Remove(tmpPath)
+			return "", sizeBefore, 0, fmt.Errorf("atomic rename: %w", err)
+		}
+		_ = os.Remove(tmpPath)
+		return "", sizeBefore, 0, fmt.Errorf("%w (rename failed and original could not be reopened: %v)", errCompactLeftStoreClosed, err)
+	}
+
+	reopened, err := openBolt(dbPath)
+	if err != nil {
+		// Rename succeeded but we can't open the new file. The compacted
+		// content is on disk and valid, but s.db is closed — there is no
+		// safe way to keep going in-process.
+		return "", sizeBefore, 0, fmt.Errorf("%w (reopen compacted db: %v)", errCompactLeftStoreClosed, err)
+	}
+	s.db = reopened
+
+	if newSt, err := os.Stat(dbPath); err == nil {
+		return dbPath, sizeBefore, newSt.Size(), nil
+	}
+	return dbPath, sizeBefore, 0, nil
+}
+
+// errCompactLeftStoreClosed is returned by maybeCompact when it had to close
+// the original bbolt handle but could not reopen any valid replacement. The
+// Store is no longer usable; the caller (NewStore) MUST treat this as fatal
+// and abort startup. Wrapping it via fmt.Errorf("%w ...", err) preserves
+// errors.Is() matching for downstream checks.
+var errCompactLeftStoreClosed = fmt.Errorf("bbolt vacuum left store handle closed; restart required")
+
+// CompactBoltFileAfterClose runs the same heuristic as maybeCompact against a
+// database file whose primary handle has already been bolt.DB.Close()'d —
+// typical site is the graceful shutdown path in main() after HTTP has drained.
+// Holding no open handles avoids lock conflicts and yields a shrunk on-disk
+// file before the next process start so RSS from mmap stays bounded even when
+// the previous run never reached NewStore()'s vacuum (crash/kill vs clean
+// restart).
+//
+// It is intentionally best-effort: on any error the original metrics.db is
+// left untouched. beforeOut/afterOut are file sizes on disk when compaction
+// actually ran (afterOut==0 means skipped or unchanged).
+func CompactBoltFileAfterClose(dbPath string) (beforeOut, afterOut int64, err error) {
+	if dbPath == "" {
+		return 0, 0, nil
+	}
+
+	st, err := os.Stat(dbPath)
+	if err != nil {
+		return 0, 0, err
+	}
+	beforeOut = st.Size()
+	if beforeOut < compactMinBytes {
+		return beforeOut, 0, nil
+	}
+
+	src, err := bolt.Open(dbPath, 0600, &bolt.Options{
+		ReadOnly:     true,
+		Timeout:      10 * time.Second,
+		FreelistType: bolt.FreelistMapType,
+	})
+	if err != nil {
+		return beforeOut, 0, fmt.Errorf("open readonly for vacuum: %w", err)
+	}
+
+	var live int64
+	viewErr := src.View(func(tx *bolt.Tx) error {
+		return tx.ForEach(func(_ []byte, b *bolt.Bucket) error {
+			s := b.Stats()
+			live += int64(s.LeafInuse + s.BranchInuse)
+			return nil
+		})
+	})
+	if viewErr != nil {
+		_ = src.Close()
+		return beforeOut, 0, viewErr
+	}
+	if live <= 0 || float64(beforeOut) < compactRatio*float64(live) {
+		_ = src.Close()
+		return beforeOut, 0, nil
+	}
+
+	log.Printf("🧯 offline bbolt vacuum: file=%d live=%d (ratio %.1fx) — compacting...",
+		beforeOut, live, float64(beforeOut)/float64(live))
+
+	tmpPath := dbPath + ".compacting_shutdown"
+	_ = os.Remove(tmpPath)
+
+	dst, err := bolt.Open(tmpPath, 0600, &bolt.Options{
+		Timeout:      5 * time.Second,
+		FreelistType: bolt.FreelistMapType,
+	})
+	if err != nil {
+		_ = src.Close()
+		return beforeOut, 0, fmt.Errorf("open temp db for offline vacuum: %w", err)
+	}
+
+	if err := bolt.Compact(dst, src, compactTxMaxBytes); err != nil {
+		_ = dst.Close()
+		_ = src.Close()
+		_ = os.Remove(tmpPath)
+		return beforeOut, 0, fmt.Errorf("offline compact: %w", err)
+	}
+	if err := dst.Close(); err != nil {
+		_ = src.Close()
+		_ = os.Remove(tmpPath)
+		return beforeOut, 0, err
+	}
+	if err := src.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return beforeOut, 0, err
+	}
+
+	if err := os.Rename(tmpPath, dbPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return beforeOut, 0, fmt.Errorf("offline vacuum rename: %w", err)
+	}
+
+	st2, err := os.Stat(dbPath)
+	if err != nil {
+		return beforeOut, 0, err
+	}
+	return beforeOut, st2.Size(), nil
 }
 
 // Close closes the database

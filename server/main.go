@@ -1206,10 +1206,28 @@ func main() {
 	// Now that no handler can be issuing new db.Update calls, it is safe to
 	// close the bbolt DB. Closing bbolt flushes in-flight writes and releases
 	// the file lock.
+	storeClosedOK := false
 	if err := store.Close(); err != nil {
 		log.Printf("⚠️  store close returned: %v", err)
 	} else {
 		log.Println("✅ Database closed cleanly")
+		storeClosedOK = true
+	}
+
+	// Second chance to shrink metrics.db after the daemon handle is gone —
+	// complements NewStore.maybeCompact when the OS sends SIGKILL (no graceful
+	// shutdown) vs SIGTERM/SIGINT (always hits this branch). Shrinking the file
+	// directly bounds bbolt mmap + RSS across restarts without requiring a human
+	// to run tooling by hand.
+	if storeClosedOK {
+		if before, after, vacErr := CompactBoltFileAfterClose(dbPath); vacErr != nil {
+			log.Printf("⚠️  offline bbolt vacuum failed (non-fatal): %v", vacErr)
+		} else if after > 0 && after < before {
+			log.Printf("🧯 offline bbolt vacuum: %.1f MB → %.1f MB (saved %.1f MB)",
+				float64(before)/1024/1024,
+				float64(after)/1024/1024,
+				float64(before-after)/1024/1024)
+		}
 	}
 	log.Println("👋 Shutdown complete")
 }
@@ -4436,10 +4454,22 @@ func init() {
 			}
 			authTokensMu.Unlock()
 
-			// Cleanup old login attempts (older than 1 hour)
+			// Cleanup old login attempts. The previous condition required
+			// attempt.count == 0, but count only resets to 0 on a successful
+			// login from the same IP — for the vast majority of failed-once-
+			// and-never-came-back probes (which is what fills the map in
+			// production) the count stays at ≥ 1 forever and the entry
+			// leaked. We now drop any entry whose lockout has expired AND
+			// whose last activity is older than 1h: a fresh attempt simply
+			// re-creates the entry from scratch, so this is behaviourally
+			// equivalent to the intended rate-limit while preventing
+			// unbounded growth from IP-scanning traffic.
 			loginAttemptsMu.Lock()
 			for ip, attempt := range loginAttempts {
-				if time.Since(attempt.lastAttempt) > 1*time.Hour && attempt.count == 0 {
+				if now.Before(attempt.lockedUntil) {
+					continue // still actively rate-limited; keep the record
+				}
+				if now.Sub(attempt.lastAttempt) > 1*time.Hour {
 					delete(loginAttempts, ip)
 				}
 			}
