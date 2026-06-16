@@ -132,34 +132,37 @@ jobs:
             client/probe-client.exe
             client/install.sh
           body: |
-            ## 🚀 Release v${{ steps.version.outputs.version }}
+            ## Release v${{ steps.version.outputs.version }}
 
-            **Critical memory-stability fix.** Long-running servers were drifting upward in RSS until OOM — the root cause was bbolt's on-disk file ballooning to many times the live-data size while the process mmap'd the whole thing. Two complementary vacuum passes (online at startup, offline at shutdown) now bound the file to the actual working set, and a few smaller leaks elsewhere were closed in the same pass. **No data migration, no wire-protocol changes; existing clients keep working.**
+            v${{ steps.version.outputs.version }} focuses on data integrity, CDN friendliness, and hardening the push/TCPing paths while keeping existing clients and databases compatible.
 
-            ### 🛠️ Critical fixes (memory & disk)
+            ### Highlights
 
-            **Root cause — bbolt mmap × append-only on-disk file**
-            - bbolt is append-only: deleted records release pages onto the freelist but the file itself never shrinks. Over weeks of churn (24h tcping window × many clients) `metrics.db` accumulates many times its live-data size. Because bbolt mmaps the entire file into the process address space, every bloat byte eventually becomes RSS as the hourly cleanup loop and `/api/tcping/history` queries touch the mapped pages. Observed in the wild: a 8 MB working set sitting inside a 376 MB file → RSS climbing to ~300 MB and the box eventually OOM-killed after `systemctl restart pulse-server`.
+            - Preserves multiple TCPing samples that arrive in the same second or with the same timestamp instead of overwriting older samples.
+            - Persists push-mode metrics and TCPing results in a single bbolt transaction, reducing write amplification without changing the wire protocol.
+            - Keeps TCPing history cache target-scoped and bounded; oversized history responses are still returned in full and only skip the in-memory cache copy.
+            - Adds startup cleanup for TCPing history older than 24 hours so large databases do not wait for the hourly cleaner after restart.
+            - Adds CDN-friendly cache headers: hashed `/_astro/*` assets are immutable for CDN/browser caches, while HTML and API/SSE responses remain fresh and safe.
+            - Hardens client IP handling behind trusted proxies and avoids logging token-bearing query strings in bundled Nginx access logs.
+            - Improves backup/restore support for Docker named volumes by detecting the actual `/app/data` mount from the running container.
+            - Fixes client request-context cancellation so registration and push responses can reliably read returned TCPing configuration.
+            - Preserves Pulse-Hotaru navbar compatibility flags (`hide_tags`, `hide_cards`) for future backend unification.
 
-            **Two-stage vacuum**
-            - **Startup vacuum** (`NewStore.maybeCompact`) — runs `bolt.Compact` into a sibling `metrics.db.compacting` file and atomically renames over the live DB iff (`size ≥ 16 MB` AND `size ≥ 2× live data`). Per-tx size capped at 64 MB so even multi-GB databases compact with a bounded transient heap. Verified end-to-end on a real 376 MB production DB: collapsed to 8 MB in ~600 ms, every record preserved.
-            - **Shutdown vacuum** (`CompactBoltFileAfterClose`) — same heuristic, but runs against the file *after* `db.Close()` succeeds. Bounds the next start's mmap even if the prior run never hit `NewStore.maybeCompact` (think SIGKILL vs graceful SIGTERM). Files already under the threshold are correctly skipped — no thrashing of healthy DBs.
-            - **Fail-safe contract** — every failure branch either restores `s.db` to a working handle, or returns a sentinel (`errCompactLeftStoreClosed`) that `NewStore` treats as fatal so systemd restarts cleanly instead of the process limping along with a closed bbolt handle and panicking later on `db.View`.
+            ### Compatibility
 
-            **Orphan-bucket cleanup**
-            - Two top-level buckets (`tcping_by_client`, `tcping_by_client_target`) and a `config/tcping_index_v1_ready` key were created by an earlier secondary-index experiment that was rolled back in favour of the cursor-seek read path. The current code never references them, but existing DBs still carry tens of megabytes of frozen index pages. `dropOrphanBuckets` removes them on first boot of v1.3.8 — the freed pages go on the freelist and are reclaimed by the same-startup vacuum. Allowlist is explicit so a future migration that adds a new bucket can't accidentally wipe it on rollback.
+            - Existing clients continue to work.
+            - Existing `metrics.db` files remain readable, including legacy TCPing key formats.
+            - Existing Docker named-volume and bind-mount deployments are supported.
+            - `/api/*` and `/api/events` intentionally remain non-cacheable; only static assets should produce CDN cache hits.
 
-            **`loginAttempts` map leaked one entry per failed IP probe (forever)**
-            - The cleanup condition `time.Since(lastAttempt) > 1h && count == 0` only matched IPs that successfully logged in and then went away — i.e. essentially never. A public-internet server scanned by random bots accumulated one `*loginAttempt` per scanner IP that never got freed. New condition drops any entry whose lockout has expired AND whose last activity is older than 1 h, which is behaviourally equivalent to the intended rate-limit but actually frees rows.
+            ### Verified
 
-            **Frontend: per-system Chart.js + tcping maps leaked on admin "delete service"**
-            - `rowsToRemove.forEach` in `SystemTable.astro` only removed the DOM row — `tcpingCharts`, `tcpingConfigs`, `tcpingActiveTargets`, `tcpingLoadingStates`, `tcpingDataSignatures` all kept the dead system's entries. For users who leave the dashboard open across many admin add/delete cycles each ghost Chart.js instance (canvas refs + datasets + animation handle) stayed pinned. Now every removal calls `cleanupTCPingChart(id)` and drops the per-system Map entries.
-
-            ### 🧪 Verified
-
-            - **Real 376 MB production DB** → startup vacuum → 8 MB; 90 keys / 36071 tcping records / 2 config / 1 auth all intact; orphan buckets gone.
-            - **90-day simulation** (200k tcping inserts/month, hourly 24h prune, repeat): file repeatedly ballooned to ~75 MB then vacuumed back to single-digit MB across three monthly cycles. Healthy 4 MB file correctly skipped — no thrash.
-            - **Live server run** with the 376 MB DB: vacuum logged, port listened, RSS stabilised at 44 MB and stayed there over 30 s of sampling. Clean SIGTERM → "Database closed cleanly" → offline vacuum correctly skipped (file already healthy).
+            - Server tests and vet checks.
+            - Client build/test checks.
+            - Frontend Astro build.
+            - Shell script syntax checks.
+            - Docker image build and runtime health check.
+            - Nginx configuration validation and cache-header inspection.
 
             ### 📦 Docker Images
             - `xhh1128/pulse:${{ steps.version.outputs.version }}`
@@ -190,12 +193,8 @@ jobs:
 
             **One-click migration to a new host:**
             ```bash
-            PASSWORD="$OLD_ADMIN_PW" TOKEN="$NEW_ADMIN_PW" \
-              bash scripts/migrate.sh --from https://old.example.com --to https://new.example.com
+            PASSWORD="$OLD_ADMIN_PW" \
+              sudo -E ./scripts/migrate.sh --from https://old.example.com
             ```
-
-            ### 📝 What this builds on
-
-            v1.3.8 inherits everything from v1.3.7: the TCPing chart re-load / jitter fixes, admin-list stability work, server-side cursor-seek read path, and the cumulative one-click migration & backup story (`pulse-{backup,restore,migrate}` CLI) plus the macOS-client parity, glassmorphism theme polish, and SEO pass from v1.3.6. See [v1.3.7 release notes](https://github.com/xhhcn/Pulse/releases/tag/v1.3.7) for the full prior list — every fix above applies on top.
           draft: false
           prerelease: false

@@ -1138,7 +1138,7 @@ const apiBase = apiBaseProp ?? '';
           <!-- Chart canvas -->
           <div class="relative" style="height: 200px; width: 100%; min-height: 200px;">
             <!-- Loading state -->
-            <div class="absolute inset-0 flex items-center justify-center bg-[#151515] dark:bg-[#151515] bg-white rounded" data-tcping-loading="${item.id}" style="height: 200px; min-height: 200px;">
+            <div class="absolute inset-0 flex items-center justify-center bg-[#151515] dark:bg-[#151515] bg-white rounded" data-tcping-loading="${safeId}" style="height: 200px; min-height: 200px;">
               <div class="flex flex-col items-center gap-2">
                 <div class="w-6 h-6 border-2 border-[#d4d4d4] dark:border-[#404040] border-t-[#525252] dark:border-t-[#d4d4d4] rounded-full animate-spin"></div>
                 <span class="text-xs text-[#525252] dark:text-[#a3a3a3]" data-translate-detail="loading">Loading...</span>

@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -130,22 +131,31 @@ type TCPingHistoryResponse struct {
 type tcpingCacheEntry struct {
 	JSON     []byte // marshaled body of TCPingHistoryResponse, ready to ship
 	CachedAt time.Time
+	Size     int
+}
+
+type tcpingCacheKey struct {
+	ClientID string
+	Target   string
 }
 
 var (
-	tcpingCache    = make(map[string]*tcpingCacheEntry)
-	tcpingCacheMu  sync.RWMutex
-	tcpingCacheTTL = 2 * time.Minute // Cache results for 2 minutes
+	tcpingCache           = make(map[tcpingCacheKey]*tcpingCacheEntry)
+	tcpingCacheMu         sync.RWMutex
+	tcpingCacheTTL        = 2 * time.Minute // Cache results for 2 minutes
+	tcpingCacheMaxEntries = 512
+	tcpingCacheMaxBytes   = 32 << 20 // 32 MiB hard cap for cached response bodies
+	tcpingCacheBytes      int
 )
 
 // Get the cached pre-encoded JSON body if present and not expired.
 // The returned slice is owned by the cache and MUST NOT be mutated by the
 // caller; the writer only reads from it.
-func getCachedTCPingResultsJSON(clientID string) ([]byte, bool) {
+func getCachedTCPingResultsJSON(clientID, target string) ([]byte, bool) {
 	tcpingCacheMu.RLock()
 	defer tcpingCacheMu.RUnlock()
 
-	entry, exists := tcpingCache[clientID]
+	entry, exists := tcpingCache[tcpingCacheKey{ClientID: clientID, Target: target}]
 	if !exists {
 		return nil, false
 	}
@@ -164,18 +174,70 @@ func getCachedTCPingResultsJSON(clientID string) ([]byte, bool) {
 // JSON value followed by a single trailing '\n'. That way cache-hit and
 // cache-miss responses are byte-identical on the wire, which simplifies
 // downstream tooling (e.g. ETag generation, log diffs, conformance tests).
-func cacheTCPingResults(clientID string, response TCPingHistoryResponse) {
+func cacheTCPingResults(clientID, target string, response TCPingHistoryResponse) {
+	if target == "" {
+		return
+	}
+
 	body, err := json.Marshal(response)
 	if err != nil {
 		return
 	}
 	body = append(body, '\n')
+	if len(body) > tcpingCacheMaxBytes {
+		// Preserve data completeness: over-budget responses are still sent to
+		// the caller by handleGetTCPingHistory; we only skip keeping a copy.
+		return
+	}
+
+	key := tcpingCacheKey{ClientID: clientID, Target: target}
 	tcpingCacheMu.Lock()
 	defer tcpingCacheMu.Unlock()
 
-	tcpingCache[clientID] = &tcpingCacheEntry{
+	tcpingCacheDeleteLocked(key)
+	tcpingCache[key] = &tcpingCacheEntry{
 		JSON:     body,
 		CachedAt: time.Now(),
+		Size:     len(body),
+	}
+	tcpingCacheBytes += len(body)
+	tcpingCacheEnforceBudgetLocked(time.Now())
+}
+
+func tcpingCacheDeleteLocked(key tcpingCacheKey) {
+	entry, ok := tcpingCache[key]
+	if !ok {
+		return
+	}
+	tcpingCacheBytes -= entry.Size
+	if tcpingCacheBytes < 0 {
+		tcpingCacheBytes = 0
+	}
+	delete(tcpingCache, key)
+}
+
+func tcpingCachePruneExpiredLocked(now time.Time) {
+	for key, entry := range tcpingCache {
+		if now.Sub(entry.CachedAt) > tcpingCacheTTL {
+			tcpingCacheDeleteLocked(key)
+		}
+	}
+}
+
+func tcpingCacheEnforceBudgetLocked(now time.Time) {
+	tcpingCachePruneExpiredLocked(now)
+	for (len(tcpingCache) > tcpingCacheMaxEntries || tcpingCacheBytes > tcpingCacheMaxBytes) && len(tcpingCache) > 0 {
+		var oldestKey tcpingCacheKey
+		var oldestAt time.Time
+		first := true
+		for key, entry := range tcpingCache {
+			if first || entry.CachedAt.Before(oldestAt) {
+				oldestKey = key
+				oldestAt = entry.CachedAt
+				first = false
+			}
+		}
+		tcpingCacheDeleteLocked(oldestKey)
 	}
 }
 
@@ -219,7 +281,11 @@ func invalidateTCPingCache(clientID string) {
 	tcpingCacheMu.Lock()
 	defer tcpingCacheMu.Unlock()
 
-	delete(tcpingCache, clientID)
+	for key := range tcpingCache {
+		if key.ClientID == clientID {
+			tcpingCacheDeleteLocked(key)
+		}
+	}
 }
 
 // Clear all TCPing cache
@@ -229,7 +295,8 @@ func clearAllTCPingCache() {
 	defer tcpingCacheMu.Unlock()
 
 	// Clear the entire cache by creating a new map
-	tcpingCache = make(map[string]*tcpingCacheEntry)
+	tcpingCache = make(map[tcpingCacheKey]*tcpingCacheEntry)
+	tcpingCacheBytes = 0
 }
 
 // Cleanup expired cache entries periodically
@@ -244,12 +311,7 @@ func startTCPingCacheCleanup(ctx context.Context) {
 		case <-ticker.C:
 		}
 		tcpingCacheMu.Lock()
-		now := time.Now()
-		for clientID, entry := range tcpingCache {
-			if now.Sub(entry.CachedAt) > tcpingCacheTTL {
-				delete(tcpingCache, clientID)
-			}
-		}
+		tcpingCachePruneExpiredLocked(time.Now())
 		tcpingCacheMu.Unlock()
 	}
 }
@@ -390,13 +452,13 @@ func (b *SSEBroker) BroadcastByView(byView map[SSEView]string) {
 // sendWithDropOldest delivers event into ch without ever blocking the caller.
 //
 // Semantics:
-//   * If the buffer has room, the event is enqueued and we return.
-//   * If the buffer is full, the oldest queued event is discarded to make
+//   - If the buffer has room, the event is enqueued and we return.
+//   - If the buffer is full, the oldest queued event is discarded to make
 //     room for the new one. Because every state-carrying event carries the
 //     full latest state, losing an older queued event is semantically
 //     equivalent to never having sent it — the newer event fully supersedes
 //     it.
-//   * In the worst-case (full buffer + a concurrent sender raced us to both
+//   - In the worst-case (full buffer + a concurrent sender raced us to both
 //     slots) we fall through and drop the new event rather than spin.  The
 //     next broadcast (within 3 s) re-syncs the subscriber from fresh state.
 //
@@ -471,8 +533,8 @@ type ClientTCPingResult struct {
 
 // ClientPushResponse is returned to push-mode clients with updated TCPing config
 type ClientPushResponse struct {
-	TCPingTargets     []string `json:"tcping_targets"`
-	TCPingIntervalSecs int     `json:"tcping_interval_secs"`
+	TCPingTargets      []string `json:"tcping_targets"`
+	TCPingIntervalSecs int      `json:"tcping_interval_secs"`
 }
 
 type ClientRegistry struct {
@@ -630,7 +692,7 @@ func (r *ClientRegistry) Register(id, name, port, ip, ipv6 string) {
 		// NAT client, tries to poll, fails twice, and calls markSystemAsOffline.
 		// Resetting them on re-registration is always wrong: the client is still
 		// actively pushing; only UpdatePushState or explicit removal should change them.
-		pushMode   = existingClient.PushMode
+		pushMode = existingClient.PushMode
 		lastPushAt = existingClient.LastPushAt
 
 		// --- Secret: preserve to avoid a race window ---
@@ -777,13 +839,13 @@ func getSharedHTTPClient() *http.Client {
 			Timeout: 20 * time.Second, // Increased from 8s to 20s for high-latency networks (e.g., Australia-Russia ~300ms RTT)
 			Transport: &http.Transport{
 				DialContext:           dialer.DialContext, // Go's net.Dialer natively supports both IPv4 and IPv6
-				MaxIdleConns:          200,               // More connections for stability
-				MaxIdleConnsPerHost:   20,                // More per-host connections
-				IdleConnTimeout:       180 * time.Second, // Longer idle timeout for stable connection
-				TLSHandshakeTimeout:   10 * time.Second,  // Increased from 5s to 10s for slow TLS
-				ResponseHeaderTimeout: 10 * time.Second,  // Wait up to 10s for response headers
-				ExpectContinueTimeout: 5 * time.Second,   // Increased from 2s to 5s
-				DisableCompression:    false,             // Enable compression for efficiency
+				MaxIdleConns:          200,                // More connections for stability
+				MaxIdleConnsPerHost:   20,                 // More per-host connections
+				IdleConnTimeout:       180 * time.Second,  // Longer idle timeout for stable connection
+				TLSHandshakeTimeout:   10 * time.Second,   // Increased from 5s to 10s for slow TLS
+				ResponseHeaderTimeout: 10 * time.Second,   // Wait up to 10s for response headers
+				ExpectContinueTimeout: 5 * time.Second,    // Increased from 2s to 5s
+				DisableCompression:    false,              // Enable compression for efficiency
 			},
 		}
 	})
@@ -920,7 +982,7 @@ func main() {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		w.Write([]byte(config.CustomCSS))
 	})
-	
+
 	// Custom JS endpoint - returns user's custom JS
 	mux.HandleFunc("/api/custom/script.js", func(w http.ResponseWriter, r *http.Request) {
 		config, err := store.GetNavbarConfig()
@@ -933,7 +995,7 @@ func main() {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		w.Write([]byte(config.CustomJS))
 	})
-	
+
 	mux.HandleFunc("/api/navbar/config", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			handleGetNavbarConfig(store, w, r)
@@ -1015,6 +1077,41 @@ func main() {
 		}
 	})
 
+	// Admin-only runtime introspection endpoint.
+	mux.HandleFunc("/api/admin/runtime", func(w http.ResponseWriter, r *http.Request) {
+		if !isAuthenticated(r) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"goroutines":          runtime.NumGoroutine(),
+			"cgo_calls":           runtime.NumCgoCall(),
+			"heap_alloc_bytes":    m.HeapAlloc,
+			"heap_inuse_bytes":    m.HeapInuse,
+			"heap_idle_bytes":     m.HeapIdle,
+			"heap_released_bytes": m.HeapReleased,
+			"heap_objects":        m.HeapObjects,
+			"stack_inuse_bytes":   m.StackInuse,
+			"sys_bytes":           m.Sys,
+			"gc_num":              m.NumGC,
+			"gc_pause_total_ns":   m.PauseTotalNs,
+			"gc_last_pause_ns":    m.PauseNs[(m.NumGC+255)%256],
+			"next_gc_bytes":       m.NextGC,
+			"clients_in_registry": func() int {
+				if clientRegistry == nil {
+					return 0
+				}
+				return len(clientRegistry.GetAll())
+			}(),
+		})
+	})
+
 	addr := ":" + portFromEnv()
 	// All background loops observe rootCtx and exit promptly when the process
 	// is asked to shut down. This matters because the shutdown path is:
@@ -1063,19 +1160,32 @@ func main() {
 		//   2. Content-addressed bundle assets under /_astro/ (Astro
 		//      fingerprints every filename with an 8-char content hash, so
 		//      a changed asset is always served under a new URL) →
-		//      Cache-Control: public, max-age=31536000, immutable.
-		//      "immutable" tells the browser not even to revalidate.
+		//      Cache-Control: public, max-age=31536000, s-maxage=31536000,
+		//      immutable. "immutable" tells the browser not even to revalidate;
+		//      s-maxage makes the CDN policy explicit.
 		//
-		// Every other static asset (favicon.svg, arbitrary files the user
-		// dropped into dist/) gets the http.FileServer default, which is
-		// the safe middle ground of a heuristic cache + Last-Modified
-		// revalidation.
+		//   3. Non-fingerprinted static files such as favicon.svg / robots.txt
+		//      get a short browser TTL and a modest CDN TTL. They are cacheable,
+		//      but not immutable because their URL does not change on deploy.
+		isStaticAssetPath := func(urlPath string) bool {
+			switch strings.ToLower(filepath.Ext(urlPath)) {
+			case ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".woff", ".woff2":
+				return true
+			default:
+				return false
+			}
+		}
+
 		setStaticCacheHeaders := func(w http.ResponseWriter, urlPath string) {
 			switch {
 			case strings.HasSuffix(urlPath, ".html") || urlPath == "/" || filepath.Ext(urlPath) == "":
 				w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 			case strings.HasPrefix(urlPath, "/_astro/"):
-				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				w.Header().Set("Cache-Control", "public, max-age=31536000, s-maxage=31536000, immutable")
+			case urlPath == "/favicon.svg" || urlPath == "/robots.txt":
+				w.Header().Set("Cache-Control", "public, max-age=3600, s-maxage=86400")
+			case isStaticAssetPath(urlPath):
+				w.Header().Set("Cache-Control", "public, max-age=86400, s-maxage=604800")
 			}
 		}
 
@@ -1933,7 +2043,7 @@ func handleClientRegister(store *Store, registry *ClientRegistry, w http.Respons
 
 	// Apply NAT IP fixup: if the reported IPv4 is absent or private, derive it
 	// from the connection source IP (same logic as handleClientPush).
-	// getClientIP handles X-Forwarded-For, X-Real-IP and raw RemoteAddr in one call.
+	// getClientIP uses forwarded headers only when the immediate peer is trusted.
 	if isPrivateIPStr(ip) {
 		if srcIP := getClientIP(r); srcIP != "" {
 			if parsed := net.ParseIP(srcIP); parsed != nil && parsed.To4() != nil && !isPrivateIP(parsed) {
@@ -1991,9 +2101,9 @@ func handleClientRegister(store *Store, registry *ClientRegistry, w http.Respons
 	}
 	// CDN-friendly: ensure registration response is not cached
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message":             "registered",
-		"id":                  payload.ID,
-		"tcping_targets":      tcpingTargets,
+		"message":              "registered",
+		"id":                   payload.ID,
+		"tcping_targets":       tcpingTargets,
 		"tcping_interval_secs": tcpingInterval,
 	})
 }
@@ -2059,7 +2169,7 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 	// the real public IP (the NAT gateway's egress IP), so we can use r.RemoteAddr
 	// (via getClientIP) as a reliable fallback when the client-reported IPv4 is empty
 	// or still private.  This also works correctly when the server is behind a reverse
-	// proxy because getClientIP reads X-Forwarded-For / X-Real-IP headers.
+	// proxy when that proxy is trusted by getClientIP.
 	if payload.IPv4 == "" || isPrivateIPStr(payload.IPv4) {
 		if srcIP := getClientIP(r); srcIP != "" {
 			if parsed := net.ParseIP(srcIP); parsed != nil && parsed.To4() != nil && !isPrivateIP(parsed) {
@@ -2112,21 +2222,81 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 
 	timeDisplay := formatUptime(payload.Uptime)
 
-	// Preserve server-side fields (order, name, tags, secret, tcping data)
-	order := 0
-	name := payload.Name
-	var tcpingData map[string]TCPingTargetData
-	var tags []string
+	// Preserve server-side fields (order, name, tags, secret, tcping data).
+	//
+	// `existing` is guaranteed non-nil at this point: handleClientPush
+	// returns 404 above when no system with this ID is registered.
+	order := existing.Order
+	name := existing.Name // Always use admin-set name
+	tags := existing.Tags
 	dbSecret := existing.Secret
-	if existing != nil {
-		order = existing.Order
-		name = existing.Name // Always use admin-set name
-		tags = existing.Tags
-		if existing.TCPingData != nil {
-			tcpingData = make(map[string]TCPingTargetData, len(existing.TCPingData))
-			for k, v := range existing.TCPingData {
-				tcpingData[k] = v
+	var tcpingData map[string]TCPingTargetData
+	if existing.TCPingData != nil {
+		tcpingData = make(map[string]TCPingTargetData, len(existing.TCPingData))
+		for k, v := range existing.TCPingData {
+			tcpingData[k] = v
+		}
+	}
+
+	// PERFORMANCE / MEMORY FIX (formerly: N+1 fsyncs per push).
+	//
+	// Compose the final metric (including merged TCPingData) entirely in
+	// memory, sanitise tcping results, and persist everything in one bbolt
+	// write transaction. The response contract stays unchanged.
+	tcpingConfig, configErr := store.GetTCPingConfig()
+	if configErr != nil || tcpingConfig == nil {
+		tcpingConfig = &TCPingConfig{Targets: []TCPingTargetEntry{}, IntervalSecs: 60}
+	}
+
+	allowedTargets := make(map[string]struct{}, len(tcpingConfig.Targets))
+	for _, t := range tcpingConfig.Targets {
+		if t.Address != "" {
+			allowedTargets[t.Address] = struct{}{}
+		}
+	}
+	targetAllowed := func(name string) bool {
+		_, ok := allowedTargets[name]
+		return ok
+	}
+
+	nowUTC := time.Now().UTC()
+	const maxPast = 10 * time.Minute
+	const maxFuture = 30 * time.Second
+	sanitize := func(t time.Time) time.Time {
+		if t.IsZero() {
+			return nowUTC
+		}
+		if t.After(nowUTC.Add(maxFuture)) || nowUTC.Sub(t) > maxPast {
+			return nowUTC
+		}
+		return t.UTC()
+	}
+
+	var batchedResults []TCPingResult
+	if len(payload.TCPingResults) > 0 {
+		batchedResults = make([]TCPingResult, 0, len(payload.TCPingResults))
+		for _, tr := range payload.TCPingResults {
+			if tr.Target == "" || !targetAllowed(tr.Target) {
+				continue
 			}
+			var latencyPtr *float64
+			if tr.Success {
+				l := tr.Latency
+				latencyPtr = &l
+				if tcpingData == nil {
+					tcpingData = make(map[string]TCPingTargetData)
+				}
+				tcpingData[tr.Target] = TCPingTargetData{
+					Latency:   tr.Latency,
+					Timestamp: sanitize(tr.MeasuredAt),
+				}
+			}
+			batchedResults = append(batchedResults, TCPingResult{
+				ClientID:  clientID,
+				Target:    tr.Target,
+				Latency:   latencyPtr,
+				Timestamp: sanitize(tr.MeasuredAt),
+			})
 		}
 	}
 
@@ -2154,15 +2324,19 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 		AgentVersion:       payload.AgentVersion,
 		Order:              order,
 		Alert:              false, // actively pushing = online
-		UpdatedAt:          time.Now().UTC(),
+		UpdatedAt:          nowUTC,
 		TCPingData:         tcpingData,
 		Tags:               tags,
 		Secret:             dbSecret,
 	}
 
-	if err := store.Upsert(metric); err != nil {
+	if err := store.SaveClientPushBatch(metric, batchedResults); err != nil {
 		http.Error(w, "failed to save metrics", http.StatusInternalServerError)
 		return
+	}
+
+	if len(batchedResults) > 0 {
+		invalidateTCPingCache(clientID)
 	}
 
 	// NOTE: Do NOT broadcast immediately here.
@@ -2171,111 +2345,6 @@ func handleClientPush(store *Store, registry *ClientRegistry, ipCache *IPCountry
 	// metric_updated events per push cycle, resulting in double refreshes.
 	// The data is already saved to the DB above; the polling loop will pick it up
 	// within ≤3 s — identical latency to pull-mode clients.
-
-	// Process any TCPing results included in the push payload.
-	// Save all results to history first, then batch-update the TCPingData
-	// snapshot with a single Get+Upsert instead of one per successful result.
-	//
-	// Deletion-race guard: the admin may have just removed a target via
-	// POST /api/tcping/config. Because clients learn about the new config
-	// only on their NEXT push response (≤ 3 s later), a push that was
-	// already queued can still carry results for a target that no longer
-	// exists in the config. Before the guard was added those stray
-	// measurements would be written to history AFTER
-	// DeleteTCPingResultsByTarget ran, leaving a single "first point" on
-	// the chart that never went away. We fix this by filtering the
-	// incoming list against the current config — any target that is not
-	// configured right now is silently dropped.
-	// Read the current tcping config once: we use it both to filter
-	// incoming results (deletion-race guard, see below) and to echo it
-	// back to the client at the end of this handler. Reading it twice
-	// used to risk observing two slightly different snapshots if admin
-	// saved between the reads; one read closes that gap.
-	tcpingConfig, configErr := store.GetTCPingConfig()
-	if configErr != nil || tcpingConfig == nil {
-		tcpingConfig = &TCPingConfig{Targets: []TCPingTargetEntry{}, IntervalSecs: 60}
-	}
-
-	if len(payload.TCPingResults) > 0 {
-		// Build an allowed-target set from the live config. If the config
-		// read failed outright above we still have an empty TCPingConfig,
-		// which here means "admin has configured no targets" — in that
-		// case nothing is allowed, and any queued pushes are dropped.
-		allowedTargets := make(map[string]struct{}, len(tcpingConfig.Targets))
-		for _, t := range tcpingConfig.Targets {
-			if t.Address != "" {
-				allowedTargets[t.Address] = struct{}{}
-			}
-		}
-		targetAllowed := func(name string) bool {
-			_, ok := allowedTargets[name]
-			return ok
-		}
-
-		now := time.Now().UTC()
-		hasSuccess := false
-		// Sanity bound on MeasuredAt: accept anything within [now-10min, now+30s].
-		// Further in the past probably means the result was queued during a long
-		// offline period and would distort charts; further in the future means
-		// client clock skew. In either case we fall back to `now`.
-		const maxPast = 10 * time.Minute
-		const maxFuture = 30 * time.Second
-		sanitize := func(t time.Time) time.Time {
-			if t.IsZero() {
-				return now
-			}
-			if t.After(now.Add(maxFuture)) || now.Sub(t) > maxPast {
-				return now
-			}
-			return t.UTC()
-		}
-		for _, tr := range payload.TCPingResults {
-			if tr.Target == "" {
-				continue
-			}
-			if !targetAllowed(tr.Target) {
-				// Target was removed from config between this client's
-				// measurement and the push arriving. Silently drop it so
-				// no stray history points can linger on admin-deleted
-				// targets.
-				continue
-			}
-			var latencyPtr *float64
-			if tr.Success {
-				l := tr.Latency
-				latencyPtr = &l
-				hasSuccess = true
-			}
-			result := TCPingResult{
-				ClientID:  clientID,
-				Target:    tr.Target,
-				Latency:   latencyPtr,
-				Timestamp: sanitize(tr.MeasuredAt),
-			}
-			if saveErr := store.SaveTCPingResult(result); saveErr == nil {
-				invalidateTCPingCache(clientID)
-			}
-		}
-		// Single Get+Upsert for all successful TCPing snapshots (reduces N DB reads
-		// and N DB writes to exactly 1+1, greatly reducing I/O for multi-target setups).
-		if hasSuccess {
-			if m, getErr := store.Get(clientID); getErr == nil && m != nil {
-				if m.TCPingData == nil {
-					m.TCPingData = make(map[string]TCPingTargetData)
-				}
-				for _, tr := range payload.TCPingResults {
-					if tr.Target == "" || !tr.Success || !targetAllowed(tr.Target) {
-						continue
-					}
-					m.TCPingData[tr.Target] = TCPingTargetData{
-						Latency:   tr.Latency,
-						Timestamp: sanitize(tr.MeasuredAt),
-					}
-				}
-				store.Upsert(*m) //nolint:errcheck
-			}
-		}
-	}
 
 	// Echo the tcping config we already loaded (see top of handler) so the
 	// client can schedule its next measurements. We deliberately reuse
@@ -2734,9 +2803,12 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 		}
 
 		resp, err = httpClient.Do(req)
-		if err == nil && resp.StatusCode == http.StatusOK {
+		if err == nil && resp != nil && resp.StatusCode == http.StatusOK {
 			successfulURL = url
 			break // Success, exit loop
+		}
+		if resp != nil {
+			resp.Body.Close()
 		}
 		if err != nil {
 			// Only log if working URL failed (this is important to track)
@@ -2744,11 +2816,8 @@ func pollClient(store *Store, client *ClientInfo, ipCache *IPCountryCache) bool 
 				log.Printf("⚠️  Client %s: cached working URL (%s) failed: %v, trying alternatives...", client.ID, url, err)
 			}
 			// Don't log individual connection attempts - only log final failure
-		} else if resp != nil {
-			if resp.StatusCode != http.StatusOK {
-				// Don't log individual HTTP errors - only log final failure
-			}
-			resp.Body.Close()
+		} else if resp != nil && resp.StatusCode != http.StatusOK {
+			// Don't log individual HTTP errors - only log final failure
 		}
 		resp = nil
 	}
@@ -3169,9 +3238,12 @@ func getCountryFromIP(ip string) string {
 			req.Header.Set("Accept", "application/json")
 
 			resp, err := httpClient.Do(req)
-			cancel() // ✅ Always cancel context immediately after request completes
 
 			if err != nil {
+				cancel()
+				if resp != nil {
+					resp.Body.Close()
+				}
 				// Network error - retry if not last attempt
 				if attempt < maxRetries-1 {
 					time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond) // Exponential backoff
@@ -3180,9 +3252,15 @@ func getCountryFromIP(ip string) string {
 				break // Try next service
 			}
 
+			resp.Body = struct {
+				io.Reader
+				io.Closer
+			}{io.LimitReader(resp.Body, 32<<10), resp.Body}
+
 			// Handle rate limiting (429 Too Many Requests)
 			if resp.StatusCode == http.StatusTooManyRequests {
 				resp.Body.Close()
+				cancel()
 				// Wait a bit before trying next service
 				time.Sleep(1 * time.Second)
 				break // Try next service
@@ -3191,6 +3269,7 @@ func getCountryFromIP(ip string) string {
 			if resp.StatusCode == http.StatusOK {
 				country := service.parser(resp)
 				resp.Body.Close()
+				cancel()
 				if country != "" {
 					return country
 				}
@@ -3198,6 +3277,7 @@ func getCountryFromIP(ip string) string {
 				break
 			} else {
 				resp.Body.Close()
+				cancel()
 				// For non-200 status codes, try next service immediately
 				break
 			}
@@ -3562,17 +3642,15 @@ func handleGetTCPingHistory(store *Store, w http.ResponseWriter, r *http.Request
 
 	var results []TCPingResult
 
-	// If no specific target is requested, try to get from cache first.
+	// Try to get the exact client+target history response from cache first.
 	// Cache stores the already-encoded JSON body, so a hit can be served
 	// without re-running json.Marshal — measurably reduces CPU under load.
-	if target == "" {
-		if body, found := getCachedTCPingResultsJSON(clientID); found {
-			writeCachedJSON(w, http.StatusOK, body)
-			return
-		}
+	if body, found := getCachedTCPingResultsJSON(clientID, target); found {
+		writeCachedJSON(w, http.StatusOK, body)
+		return
 	}
 
-	// Cache miss or specific target requested - query database
+	// Cache miss - query database
 	if target != "" {
 		results, err = store.GetTCPingResults(clientID, target)
 	} else {
@@ -3593,10 +3671,7 @@ func handleGetTCPingHistory(store *Store, w http.ResponseWriter, r *http.Request
 		Stats:   stats,
 	}
 
-	// Cache the response if we fetched all targets (no specific target filter)
-	if target == "" {
-		cacheTCPingResults(clientID, response)
-	}
+	cacheTCPingResults(clientID, target, response)
 
 	writeJSON(w, http.StatusOK, response)
 }
@@ -3610,7 +3685,7 @@ func handleGetNavbarConfig(store *Store, w http.ResponseWriter, r *http.Request)
 		http.Error(w, fmt.Sprintf("failed to get navbar config: %v", err), http.StatusInternalServerError)
 		return
 	}
-	
+
 	// SECURITY: Only return SharedSecret to authenticated admin users
 	// Unauthenticated users should never see the secret
 	if !isAuthenticated(r) {
@@ -3619,15 +3694,17 @@ func handleGetNavbarConfig(store *Store, w http.ResponseWriter, r *http.Request)
 			Text:        config.Text,
 			Logo:        config.Logo,
 			CustomCSS:   config.CustomCSS,   // Public: used for page styling
-			CustomJS:    config.CustomJS,     // Public: used for page functionality
-			ShowTraffic: config.ShowTraffic,  // Public: controls traffic display in detail section
-			ShowGlass:   config.ShowGlass,    // Public: controls glassmorphism effect
+			CustomJS:    config.CustomJS,    // Public: used for page functionality
+			ShowTraffic: config.ShowTraffic, // Public: controls traffic display in detail section
+			ShowGlass:   config.ShowGlass,   // Public: controls glassmorphism effect
+			HideTags:    config.HideTags,    // Public: Hotaru-compatible display flag
+			HideCards:   config.HideCards,   // Public: Hotaru-compatible display flag
 			// SharedSecret is intentionally omitted for security
 		}
 		writeJSON(w, http.StatusOK, publicConfig)
 		return
 	}
-	
+
 	// Authenticated admin users can see the full config including SharedSecret
 	writeJSON(w, http.StatusOK, config)
 }
@@ -4209,26 +4286,26 @@ func startTCPingPolling(ctx context.Context, registry *ClientRegistry, store *St
 					continue
 				}
 
-			// Acquire the semaphore slot BEFORE spawning the goroutine so we
-			// never launch more than maxConcurrentTCPing workers at a time.
-			// Doing it inside the goroutine (the old pattern) would let a busy
-			// tick spawn N_clients × N_targets goroutines up front, all of
-			// them blocked on the channel send — the stack and scheduler
-			// overhead of hundreds of parked goroutines is exactly what the
-			// semaphore is supposed to prevent.
-			select {
-			case <-ctx.Done():
-				return
-			case tcpingSem <- struct{}{}:
-			}
+				// Acquire the semaphore slot BEFORE spawning the goroutine so we
+				// never launch more than maxConcurrentTCPing workers at a time.
+				// Doing it inside the goroutine (the old pattern) would let a busy
+				// tick spawn N_clients × N_targets goroutines up front, all of
+				// them blocked on the channel send — the stack and scheduler
+				// overhead of hundreds of parked goroutines is exactly what the
+				// semaphore is supposed to prevent.
+				select {
+				case <-ctx.Done():
+					return
+				case tcpingSem <- struct{}{}:
+				}
 
-			go func(clientID string, tgt TCPingTargetEntry) {
-				defer func() { <-tcpingSem }()
+				go func(clientID string, tgt TCPingTargetEntry) {
+					defer func() { <-tcpingSem }()
 
-				// CRITICAL: Re-fetch client from registry inside goroutine to get latest WorkingURL
-				// This ensures we always use the most up-to-date WorkingURL (especially IPv6)
-				// which may have been updated by pollClient or isClientConnected
-				c := registry.Get(clientID)
+					// CRITICAL: Re-fetch client from registry inside goroutine to get latest WorkingURL
+					// This ensures we always use the most up-to-date WorkingURL (especially IPv6)
+					// which may have been updated by pollClient or isClientConnected
+					c := registry.Get(clientID)
 					if c == nil || c.ID == "" || tgt.Address == "" {
 						return
 					}
@@ -4459,17 +4536,19 @@ func init() {
 			// login from the same IP — for the vast majority of failed-once-
 			// and-never-came-back probes (which is what fills the map in
 			// production) the count stays at ≥ 1 forever and the entry
-			// leaked. We now drop any entry whose lockout has expired AND
-			// whose last activity is older than 1h: a fresh attempt simply
-			// re-creates the entry from scratch, so this is behaviourally
-			// equivalent to the intended rate-limit while preventing
-			// unbounded growth from IP-scanning traffic.
+			// leaked. We now drop entries idle for more than 24h
+			// unconditionally, or idle for more than 1h once any active
+			// lockout has expired. A fresh attempt simply re-creates the
+			// entry from scratch, preserving the intended rate-limit while
+			// preventing unbounded growth from IP-scanning traffic.
 			loginAttemptsMu.Lock()
 			for ip, attempt := range loginAttempts {
-				if now.Before(attempt.lockedUntil) {
-					continue // still actively rate-limited; keep the record
+				idle := now.Sub(attempt.lastAttempt)
+				if idle > 24*time.Hour {
+					delete(loginAttempts, ip)
+					continue
 				}
-				if now.Sub(attempt.lastAttempt) > 1*time.Hour {
+				if idle > 1*time.Hour && !now.Before(attempt.lockedUntil) {
 					delete(loginAttempts, ip)
 				}
 			}
@@ -4478,7 +4557,7 @@ func init() {
 			// Cleanup old verify attempts (older than 5 minutes)
 			verifyAttemptsMu.Lock()
 			for ip, attempt := range verifyAttempts {
-				if time.Since(attempt.lastAttempt) > 5*time.Minute {
+				if now.Sub(attempt.lastAttempt) > 5*time.Minute {
 					delete(verifyAttempts, ip)
 				}
 			}
@@ -4541,28 +4620,93 @@ func handleAuthSetup(store *Store, w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
-// getClientIP extracts the client IP address from the request
-func getClientIP(r *http.Request) string {
-	// 1. Check X-Forwarded-For header (for proxies/load balancers)
-	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
-		// X-Forwarded-For can contain multiple IPs, take the first one
-		ips := strings.Split(ip, ",")
-		if len(ips) > 0 {
-			return strings.TrimSpace(ips[0])
+var (
+	trustedProxyOnce sync.Once
+	trustedProxyNets []*net.IPNet
+)
+
+func loadTrustedProxyNets() {
+	raw := strings.TrimSpace(os.Getenv("TRUSTED_PROXIES"))
+	if raw == "" {
+		return
+	}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if _, cidr, err := net.ParseCIDR(part); err == nil {
+			trustedProxyNets = append(trustedProxyNets, cidr)
+			continue
+		}
+		if ip := net.ParseIP(part); ip != nil {
+			bits := 128
+			if ip.To4() != nil {
+				bits = 32
+			}
+			trustedProxyNets = append(trustedProxyNets, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+			continue
+		}
+		log.Printf("⚠️  Ignoring invalid TRUSTED_PROXIES entry %q", part)
+	}
+}
+
+func isTrustedProxyIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	trustedProxyOnce.Do(loadTrustedProxyNets)
+	for _, network := range trustedProxyNets {
+		if network.Contains(ip) {
+			return true
 		}
 	}
+	return false
+}
 
-	// 2. Check X-Real-IP header (for nginx proxy)
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return strings.TrimSpace(ip)
+func remoteAddrIP(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err == nil {
+		return host
 	}
+	if ip := net.ParseIP(strings.TrimSpace(remoteAddr)); ip != nil {
+		return ip.String()
+	}
+	return strings.TrimSpace(remoteAddr)
+}
 
-	// 3. Fall back to RemoteAddr
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+func firstForwardedIP(header string) string {
+	for _, part := range strings.Split(header, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" || strings.EqualFold(part, "unknown") {
+			continue
+		}
+		if ip := net.ParseIP(part); ip != nil {
+			return ip.String()
+		}
 	}
-	return host
+	return ""
+}
+
+// getClientIP extracts the client IP address from the request. Forwarded
+// headers are trusted only when the immediate peer is a trusted proxy
+// (loopback by default, plus TRUSTED_PROXIES as comma-separated IP/CIDR
+// entries). This preserves the bundled nginx setup while preventing direct
+// clients from spoofing X-Forwarded-For to bypass login rate limits.
+func getClientIP(r *http.Request) string {
+	remoteIP := remoteAddrIP(r.RemoteAddr)
+	if isTrustedProxyIP(net.ParseIP(remoteIP)) {
+		if ip := firstForwardedIP(r.Header.Get("X-Forwarded-For")); ip != "" {
+			return ip
+		}
+		if ip := firstForwardedIP(r.Header.Get("X-Real-IP")); ip != "" {
+			return ip
+		}
+	}
+	return remoteIP
 }
 
 // handleAuthLogin authenticates and returns a token

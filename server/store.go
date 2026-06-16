@@ -170,6 +170,12 @@ func NewStore(dbPath string) (*Store, error) {
 		log.Printf("🧹 Dropped orphan buckets/keys from previous versions: %s", strings.Join(dropped, ", "))
 	}
 
+	if removed, err := store.cleanupOldTCPingResults(); err != nil {
+		log.Printf("⚠️  startup tcping cleanup failed (non-fatal): %v", err)
+	} else if removed > 0 {
+		log.Printf("🧹 Startup tcping cleanup: removed %d records older than 24h", removed)
+	}
+
 	// Online compaction. bbolt is append-only: when records are deleted the
 	// pages go on the freelist but the file never shrinks on its own. On
 	// long-running deployments with churny workloads (24h tcping window),
@@ -636,6 +642,26 @@ type TCPingResult struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
+func tcpingResultKeyPrefix(result TCPingResult) string {
+	return fmt.Sprintf("%d_%s_%09d_", result.Timestamp.Unix(), result.ClientID, result.Timestamp.Nanosecond())
+}
+
+func putTCPingResult(bucket *bolt.Bucket, result TCPingResult) error {
+	data, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("failed to marshal tcping result: %w", err)
+	}
+
+	prefix := tcpingResultKeyPrefix(result)
+	for seq := 0; seq < 1_000_000; seq++ {
+		key := fmt.Sprintf("%s%06d_%s", prefix, seq, result.Target)
+		if bucket.Get([]byte(key)) == nil {
+			return bucket.Put([]byte(key), data)
+		}
+	}
+	return fmt.Errorf("too many tcping results for %s/%s at %s", result.ClientID, result.Target, result.Timestamp.Format(time.RFC3339Nano))
+}
+
 // SaveTCPingResult saves a tcping result
 func (s *Store) SaveTCPingResult(result TCPingResult) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
@@ -644,14 +670,42 @@ func (s *Store) SaveTCPingResult(result TCPingResult) error {
 			return fmt.Errorf("tcping bucket not found")
 		}
 
-		// Use timestamp + client_id + target as key for uniqueness
-		key := fmt.Sprintf("%d_%s_%s", result.Timestamp.Unix(), result.ClientID, result.Target)
-		data, err := json.Marshal(result)
+		return putTCPingResult(bucket, result)
+	})
+}
+
+// SaveClientPushBatch atomically writes the system metric and all tcping
+// results from a single push in one bbolt transaction.
+func (s *Store) SaveClientPushBatch(metric SystemMetric, tcpingResults []TCPingResult) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		systems := tx.Bucket([]byte(bucketName))
+		if systems == nil {
+			return fmt.Errorf("systems bucket not found")
+		}
+		data, err := json.Marshal(metric)
 		if err != nil {
-			return fmt.Errorf("failed to marshal tcping result: %w", err)
+			return fmt.Errorf("marshal metric: %w", err)
+		}
+		if err := systems.Put([]byte(metric.ID), data); err != nil {
+			return fmt.Errorf("put metric: %w", err)
 		}
 
-		return bucket.Put([]byte(key), data)
+		if len(tcpingResults) == 0 {
+			return nil
+		}
+		tcping := tx.Bucket([]byte(tcpingBucket))
+		if tcping == nil {
+			return fmt.Errorf("tcping bucket not found")
+		}
+		for _, r := range tcpingResults {
+			if r.Target == "" {
+				continue
+			}
+			if err := putTCPingResult(tcping, r); err != nil {
+				return fmt.Errorf("put tcping result: %w", err)
+			}
+		}
+		return nil
 	})
 }
 
@@ -659,14 +713,12 @@ func (s *Store) SaveTCPingResult(result TCPingResult) error {
 // If target is provided, only returns results for that target.
 //
 // Uses the same cursor-seek strategy as CleanupOldTCPingResults: keys are
-// formatted as "<unix-seconds>_<client>_<target>" with a 10-digit timestamp
-// (Unix seconds fit in 10 chars until year 2286), so bbolt's lexicographic
-// iteration order matches numeric timestamp order. Seeking directly to the
-// cutoff prefix and walking forward avoids unmarshalling potentially hundreds
-// of thousands of older records on busy deployments — which is what made
-// "open chart" perceptibly slow as the database aged. The `_` separator
-// prevents the prefix from accidentally matching a longer timestamp (e.g.
-// "1714531200" vs "1714531200_xxx").
+// formatted as "<unix-seconds>_<client>_<nanosecond>_<sequence>_<target>"
+// (older records used "<unix-seconds>_<client>_<target>"). Unix seconds
+// fit in 10 characters until year 2286, so bbolt's lexicographic iteration
+// order matches numeric timestamp order. Seeking directly to the cutoff
+// prefix and walking forward avoids unmarshalling potentially hundreds of
+// thousands of older records on busy deployments.
 //
 // Within a single second the suffix order is `<client>_<target>`, so records
 // for one client/target chunk together. We still emit a final sort below to
@@ -682,6 +734,13 @@ func (s *Store) GetTCPingResults(clientID string, target ...string) ([]TCPingRes
 		filterTarget = target[0]
 	}
 
+	clientPrefix := []byte(clientID + "_")
+	var targetSuffix []byte
+	if filterTarget != "" {
+		targetSuffix = []byte("_" + filterTarget)
+	}
+	tsPrefixLen := len(cutoffPrefix)
+
 	err := s.db.View(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(tcpingBucket))
 		if bucket == nil {
@@ -693,6 +752,17 @@ func (s *Store) GetTCPingResults(clientID string, target ...string) ([]TCPingRes
 		// from here forward is within the 24-hour window. Records older
 		// than the cutoff are skipped entirely without unmarshalling.
 		for k, v := c.Seek(cutoffPrefix); k != nil; k, v = c.Next() {
+			if len(k) <= tsPrefixLen {
+				continue
+			}
+			afterTS := k[tsPrefixLen:]
+			if !bytes.HasPrefix(afterTS, clientPrefix) {
+				continue
+			}
+			if targetSuffix != nil && !bytes.HasSuffix(k, targetSuffix) {
+				continue
+			}
+
 			var result TCPingResult
 			if err := json.Unmarshal(v, &result); err != nil {
 				continue // Skip corrupted entry
@@ -752,7 +822,7 @@ func (s *Store) DeleteTCPingResultsByTarget(target string) error {
 			}
 
 			if result.Target == target {
-				keysToDelete = append(keysToDelete, k)
+				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
 			}
 			return nil
 		})
@@ -800,7 +870,7 @@ func (s *Store) DeleteTCPingResultsByClient(clientID string) error {
 			}
 
 			if result.ClientID == clientID {
-				keysToDelete = append(keysToDelete, k)
+				keysToDelete = append(keysToDelete, append([]byte(nil), k...))
 			}
 			return nil
 		})
@@ -832,14 +902,12 @@ func (s *Store) DeleteTCPingResultsByClient(clientID string) error {
 
 // CleanupOldTCPingResults removes tcping results older than 24 hours.
 //
-// Keys are formatted as "<unix-seconds>_<client>_<target>" where the
-// timestamp is always 10 digits (Unix seconds fit in 10 characters until
-// year 2286), so bbolt's lexicographic iteration order matches numeric
-// timestamp order. We therefore seek to the cutoff prefix and stop
-// iterating as soon as we encounter a record newer than the cutoff —
-// avoiding a full-bucket scan of potentially hundreds of thousands of
-// entries every hour on busy deployments.
-func (s *Store) CleanupOldTCPingResults() error {
+// Keys start with "<unix-seconds>_" where the timestamp is always 10 digits
+// until year 2286, so bbolt's lexicographic iteration order matches numeric
+// timestamp order. We therefore stop iterating as soon as we encounter a
+// record newer than the cutoff, avoiding a full-bucket scan of potentially
+// hundreds of thousands of entries every hour on busy deployments.
+func (s *Store) cleanupOldTCPingResults() (int, error) {
 	cutoffTime := time.Now().Add(-24 * time.Hour)
 	cutoffPrefix := []byte(fmt.Sprintf("%d_", cutoffTime.Unix()))
 	var keysToDelete [][]byte
@@ -877,12 +945,12 @@ func (s *Store) CleanupOldTCPingResults() error {
 	})
 
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	// Second pass: delete old entries
 	if len(keysToDelete) > 0 {
-		return s.db.Update(func(tx *bolt.Tx) error {
+		if err := s.db.Update(func(tx *bolt.Tx) error {
 			bucket := tx.Bucket([]byte(tcpingBucket))
 			if bucket == nil {
 				return fmt.Errorf("tcping bucket not found")
@@ -894,10 +962,17 @@ func (s *Store) CleanupOldTCPingResults() error {
 				}
 			}
 			return nil
-		})
+		}); err != nil {
+			return 0, err
+		}
 	}
 
-	return nil
+	return len(keysToDelete), nil
+}
+
+func (s *Store) CleanupOldTCPingResults() error {
+	_, err := s.cleanupOldTCPingResults()
+	return err
 }
 
 // TCPingTargetEntry represents a single tcping target with name and address
@@ -1042,10 +1117,11 @@ func (s *Store) VerifyPassword(password string) (bool, error) {
 		if bucket == nil {
 			return fmt.Errorf("auth bucket not found")
 		}
-		hashedPassword = bucket.Get([]byte(passwordKey))
-		if hashedPassword == nil {
+		raw := bucket.Get([]byte(passwordKey))
+		if raw == nil {
 			return fmt.Errorf("password not set")
 		}
+		hashedPassword = append([]byte(nil), raw...)
 		return nil
 	})
 	if err != nil {
@@ -1074,6 +1150,8 @@ type NavbarConfig struct {
 	CustomJS     string `json:"custom_js"`     // Custom JavaScript for all pages
 	ShowTraffic  bool   `json:"show_traffic"`  // Show real-time and total traffic in detail dropdown
 	ShowGlass    bool   `json:"show_glass"`    // Enable glassmorphism (frosted glass) visual effect
+	HideTags     bool   `json:"hide_tags"`     // Hotaru-compatible: hide tag row on homepage
+	HideCards    bool   `json:"hide_cards"`    // Hotaru-compatible: hide homepage card grid
 }
 
 // GetNavbarConfig retrieves the navbar configuration
